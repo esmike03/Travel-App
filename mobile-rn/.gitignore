@@ -1,0 +1,28 @@
+# Expo / React Native
+node_modules/
+.expo/
+dist/
+web-build/
+*.orig.*
+
+# Native
+android/
+ios/
+
+# Metro
+.metro-health-check*
+
+# Debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+
+# Env
+.env*.local
+
+# Typescript
+*.tsbuildinfo
+expo-env.d.ts

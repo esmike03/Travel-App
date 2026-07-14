@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "Travs",
+    "slug": "travs-bohol",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "travs",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#1F7A4D"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.travs.bohol",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Travs uses your location to show distance and ETA to Bohol destinations and to sort nearby spots."
+      }
+    },
+    "android": {
+      "package": "com.travs.bohol",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Travs uses your location to show distance and ETA to Bohol destinations and to sort nearby spots."
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      "expo-asset",
+      "expo-font",
+      "expo-sqlite"
+    ]
+  }
+}
