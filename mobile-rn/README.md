@@ -23,6 +23,21 @@ npm start          # then scan the QR with Expo Go, or press a / i
 > The interactive map (`react-native-maps`) needs a real device or emulator; it
 > does not render on `expo start --web`.
 
+## Dependency security
+
+The `postcss` and `uuid` entries under `overrides` in `package.json` patch
+vulnerable transitive build-tool dependencies while the app remains on Expo SDK
+54. Keep these overrides until a later Expo SDK provides patched versions. After
+changing dependencies, verify the dependency graph with:
+
+```bash
+npm audit
+npx expo-doctor
+```
+
+Do not use `npm audit fix --force` for this project: npm may replace Expo with an
+incompatible SDK version. Upgrade Expo and its SDK-managed packages together.
+
 ## What was ported
 
 Feature parity with the current app, which renders from a **static, in-memory
