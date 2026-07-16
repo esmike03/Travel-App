@@ -5,6 +5,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme, ThemeMode } from '../theme/ThemeContext';
 import { withAlpha } from '../theme/colors';
 import { useAuth } from '../context/AuthContext';
+import RegionSetting from '../components/RegionSetting';
 import { showToast } from '../utils/toast';
 
 export default function ProfileScreen() {
@@ -44,6 +45,9 @@ export default function ProfileScreen() {
           </View>
         </View>
       </View>
+
+      {/* Where the app is pointed */}
+      <RegionSetting />
 
       {/* Appearance */}
       <View style={[styles.card, { backgroundColor: colors.surface }]}>

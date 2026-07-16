@@ -13,6 +13,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeContext';
 import { withAlpha } from '../theme/colors';
 import { destinations, Destination } from '../data/destinations';
+import { useRegionSetting } from '../context/RegionContext';
 import { useFavorites } from '../context/FavoritesContext';
 import { AddToTripButton, CategoryPill, RatingPill, SavedBadge } from '../components/common';
 
@@ -22,17 +23,22 @@ export default function DiscoverScreen({
   onDestinationClick: (id: number) => void;
 }) {
   const { colors } = useTheme();
+  const { region, isHome } = useRegionSetting();
   const [query, setQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
+  // The curated set is Bohol's. Showing it while the app is pointed at another
+  // province would be plainly wrong, so away from home there is nothing here.
+  const spots = useMemo(() => (isHome ? destinations : []), [isHome]);
+
   const categories = useMemo(
-    () => Array.from(new Set(destinations.map((d) => d.category))),
-    []
+    () => Array.from(new Set(spots.map((d) => d.category))),
+    [spots]
   );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return destinations.filter((d) => {
+    return spots.filter((d) => {
       const matchesQuery =
         q === '' ||
         d.name.toLowerCase().includes(q) ||
@@ -43,14 +49,11 @@ export default function DiscoverScreen({
         selectedCategory === null || d.category === selectedCategory;
       return matchesQuery && matchesCategory;
     });
-  }, [query, selectedCategory]);
+  }, [spots, query, selectedCategory]);
 
   const featured = useMemo(
-    () =>
-      [...destinations]
-        .sort((a, b) => parseFloat(b.rating) - parseFloat(a.rating))
-        .slice(0, 5),
-    []
+    () => [...spots].sort((a, b) => parseFloat(b.rating) - parseFloat(a.rating)).slice(0, 5),
+    [spots]
   );
 
   const showFeatured = selectedCategory === null && query.trim() === '';
@@ -61,11 +64,26 @@ export default function DiscoverScreen({
       contentContainerStyle={{ paddingTop: 20, paddingBottom: 32 }}
     >
       <View style={{ paddingHorizontal: 20 }}>
-        <Text style={[styles.h1, { color: colors.onBackground }]}>Discover Bohol</Text>
+        <Text style={[styles.h1, { color: colors.onBackground }]}>Discover {region.name}</Text>
         <Text style={{ color: colors.onSurfaceVariant, fontSize: 14 }}>
-          Curated spots for your next trip.
+          {isHome
+            ? 'Curated spots for your next trip.'
+            : `Travs has no curated spots for ${region.name} yet.`}
         </Text>
       </View>
+
+      {!isHome ? (
+        <View style={{ alignItems: 'center', paddingHorizontal: 32, paddingVertical: 48, gap: 10 }}>
+          <MaterialIcons name="travel-explore" size={40} color={colors.onSurfaceVariant} />
+          <Text style={{ fontSize: 15, fontWeight: '600', color: colors.onSurface, textAlign: 'center' }}>
+            Exploring {region.name}
+          </Text>
+          <Text style={{ fontSize: 13, color: colors.onSurfaceVariant, textAlign: 'center' }}>
+            Hand-picked spots only exist for Bohol so far. Your map, weather and plans all work
+            here — add stops by searching for the places you want to visit.
+          </Text>
+        </View>
+      ) : null}
 
       <View style={{ height: 16 }} />
       <View style={{ paddingHorizontal: 20 }}>

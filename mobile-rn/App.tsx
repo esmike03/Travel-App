@@ -8,6 +8,10 @@ import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { AuthProvider } from './src/context/AuthContext';
 import { FavoritesProvider } from './src/context/FavoritesContext';
 import { TripsProvider } from './src/context/TripsContext';
+import { PlansProvider } from './src/context/PlansContext';
+import { WeatherProvider } from './src/context/WeatherContext';
+import { RegionProvider } from './src/context/RegionContext';
+import { PlacesProvider } from './src/context/PlacesContext';
 import RootNavigator from './src/navigation/RootNavigator';
 
 function ThemedStatusBar() {
@@ -24,10 +28,22 @@ function ThemedAppShell() {
       <SafeAreaProvider>
         <AuthProvider>
           <FavoritesProvider>
-            <TripsProvider>
-              <ThemedStatusBar />
-              <RootNavigator />
-            </TripsProvider>
+            {/* Places above Trips: a stop can reference a place the traveller
+                added, so those must be loaded before stops resolve. */}
+            <PlacesProvider>
+              <TripsProvider>
+                <PlansProvider>
+                  {/* Region above Weather: the forecast follows wherever the
+                      app is currently pointed. */}
+                  <RegionProvider>
+                    <WeatherProvider>
+                      <ThemedStatusBar />
+                      <RootNavigator />
+                    </WeatherProvider>
+                  </RegionProvider>
+                </PlansProvider>
+              </TripsProvider>
+            </PlacesProvider>
           </FavoritesProvider>
         </AuthProvider>
       </SafeAreaProvider>

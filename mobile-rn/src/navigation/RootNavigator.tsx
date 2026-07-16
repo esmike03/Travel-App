@@ -30,6 +30,7 @@ import ItineraryScreen from '../screens/ItineraryScreen';
 import FavoritesScreen from '../screens/FavoritesScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import DestinationDetailScreen from '../screens/DestinationDetailScreen';
+import NavigationScreen from '../screens/NavigationScreen';
 
 /* ---------------- Auth stack ---------------- */
 
@@ -139,6 +140,9 @@ function MainTabs() {
             onDestinationClick={(id) =>
               navigation.getParent()?.navigate('Detail', { destinationId: id })
             }
+            onNavigate={(id) =>
+              navigation.getParent()?.navigate('Navigate', { destinationId: id })
+            }
           />
         )}
       </Tabs.Screen>
@@ -162,6 +166,7 @@ function MainTabs() {
 export type RootStackParams = {
   Tabs: undefined;
   Detail: { destinationId: number };
+  Navigate: { destinationId: number };
 };
 const RootStack = createNativeStackNavigator<RootStackParams>();
 
@@ -180,6 +185,17 @@ function MainNavigator() {
       <RootStack.Screen name="Detail">
         {({ route, navigation }: NativeStackScreenProps<RootStackParams, 'Detail'>) => (
           <DestinationDetailScreen
+            destinationId={route.params.destinationId}
+            onBack={() => navigation.goBack()}
+            onNavigate={() =>
+              navigation.navigate('Navigate', { destinationId: route.params.destinationId })
+            }
+          />
+        )}
+      </RootStack.Screen>
+      <RootStack.Screen name="Navigate">
+        {({ route, navigation }: NativeStackScreenProps<RootStackParams, 'Navigate'>) => (
+          <NavigationScreen
             destinationId={route.params.destinationId}
             onBack={() => navigation.goBack()}
           />

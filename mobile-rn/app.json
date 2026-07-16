@@ -24,7 +24,9 @@
       "package": "com.travs.bohol",
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "plugins": [
@@ -34,10 +36,30 @@
           "locationWhenInUsePermission": "Travs uses your location to show distance and ETA to Bohol destinations and to sort nearby spots."
         }
       ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Travs lets you add one of your own photos to the card you share after visiting a place.",
+          "cameraPermission": "Travs lets you take a photo for the card you share after visiting a place."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Travs saves your shareable trip card to your photos.",
+          "savePhotosPermission": "Travs saves your shareable trip card to your photos.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
       "@react-native-community/datetimepicker",
       "expo-asset",
       "expo-font",
       "expo-sqlite"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "3df0fd39-b724-4c44-acdc-5d33c2feb5a7"
+      }
+    }
   }
 }

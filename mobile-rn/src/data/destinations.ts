@@ -276,8 +276,35 @@ export const destinations: Destination[] = [
   },
 ];
 
+/* ---------------- Custom places ---------------- */
+
+// Places the traveller added themselves by searching the map — the only way to
+// plan a trip outside Bohol, where there is no curated list.
+//
+// They live in a module registry rather than behind a hook because
+// destinationById is called from pure helpers (route maths, share card totals)
+// as well as components. PlacesProvider owns the data and keeps this in step;
+// anything rendering stops subscribes to usePlaces() so it re-renders when the
+// registry changes.
+let customPlaces: Destination[] = [];
+
+// Curated ids are 1..16 and hand-written. Custom ids start far above them so the
+// two can never collide, whatever gets curated later.
+export const CUSTOM_ID_BASE = 1_000_000;
+
+export function isCustomPlace(id: number): boolean {
+  return id >= CUSTOM_ID_BASE;
+}
+
+/** Called by PlacesProvider whenever the custom set loads or changes. */
+export function setCustomPlaces(places: Destination[]): void {
+  customPlaces = places;
+}
+
 export function destinationById(id: number): Destination | undefined {
-  return destinations.find((d) => d.id === id);
+  return (
+    destinations.find((d) => d.id === id) ?? customPlaces.find((d) => d.id === id)
+  );
 }
 
 // Haversine distance in km — replaces android.location.Location.distanceBetween.

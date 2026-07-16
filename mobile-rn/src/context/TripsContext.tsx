@@ -18,6 +18,12 @@ import {
   persistPositions,
   TripStopRow,
 } from '../data/db';
+import { PlanScope, PlanRange, defaultRange, todayIso } from '../utils/planDates';
+
+// Date helpers live in utils/planDates; re-exported here so the many existing
+// `from '../context/TripsContext'` import sites keep working.
+export type { PlanScope, PlanRange } from '../utils/planDates';
+export { todayIso, isoToDate, formatDate, formatTime } from '../utils/planDates';
 
 export interface TripStop {
   id: number;
@@ -27,12 +33,21 @@ export interface TripStop {
   minute: number; // 0-59
   notes: string | null;
   visited: boolean;
+  position: number; // manual drag order
+  scope: PlanScope; // the plan (day/week/month) the user created this stop under
+  // The plan's date range, carried on the stop because plans are derived by
+  // grouping stops rather than stored: a week plan's range is user-chosen and
+  // could not otherwise be recovered from `date` alone.
+  planStart: string;
+  planEnd: string;
 }
 
 interface TripsContextValue {
   stops: TripStop[];
   add: (
     destinationId: number,
+    scope: PlanScope,
+    range: PlanRange,
     date: string,
     hour: number,
     minute: number,
@@ -41,6 +56,8 @@ interface TripsContextValue {
   update: (stop: TripStop) => void;
   remove: (id: number) => void;
   move: (from: number, to: number) => void;
+  // Persist a new manual order (the given ids, in the order they should appear).
+  reorder: (idsInOrder: number[]) => void;
   isInTrip: (destinationId: number) => boolean;
   // Quick add/remove by destination (defaults to today at 9:00). Returns whether
   // the destination is in the trip afterwards.
@@ -49,13 +66,6 @@ interface TripsContextValue {
 }
 
 const TripsContext = createContext<TripsContextValue | undefined>(undefined);
-
-export function todayIso(): string {
-  const d = new Date();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${m}-${day}`;
-}
 
 function toRow(s: TripStop): TripStopRow {
   return {
@@ -66,6 +76,10 @@ function toRow(s: TripStop): TripStopRow {
     minute: s.minute,
     notes: s.notes,
     visited: s.visited ? 1 : 0,
+    position: s.position,
+    scope: s.scope,
+    planStart: s.planStart,
+    planEnd: s.planEnd,
   };
 }
 
@@ -80,15 +94,25 @@ export function TripsProvider({ children }: { children: React.ReactNode }) {
       try {
         const rows = await loadTripStops();
         if (!active) return;
-        const loaded: TripStop[] = rows.map((r) => ({
-          id: r.id,
-          destinationId: r.destinationId,
-          date: r.date,
-          hour: r.hour,
-          minute: r.minute,
-          notes: r.notes,
-          visited: r.visited === 1,
-        }));
+        const loaded: TripStop[] = rows.map((r) => {
+          const scope = (r.scope as PlanScope) ?? 'day';
+          // Rows written before ranges existed carry no plan range; deriving it
+          // from scope + date reproduces exactly how they used to be grouped.
+          const fallback = defaultRange(scope, r.date);
+          return {
+            id: r.id,
+            destinationId: r.destinationId,
+            date: r.date,
+            hour: r.hour,
+            minute: r.minute,
+            notes: r.notes,
+            visited: r.visited === 1,
+            position: r.position ?? 0,
+            scope,
+            planStart: r.planStart ?? fallback.start,
+            planEnd: r.planEnd ?? fallback.end,
+          };
+        });
         setStops(loaded);
         nextId.current = loaded.reduce((max, s) => Math.max(max, s.id), 0) + 1;
       } catch {
@@ -103,6 +127,8 @@ export function TripsProvider({ children }: { children: React.ReactNode }) {
   const add = useCallback(
     (
       destinationId: number,
+      scope: PlanScope,
+      range: PlanRange,
       date: string,
       hour: number,
       minute: number,
@@ -116,9 +142,16 @@ export function TripsProvider({ children }: { children: React.ReactNode }) {
         minute,
         notes: notes && notes.trim() ? notes : null,
         visited: false,
+        position: 0,
+        scope,
+        planStart: range.start,
+        planEnd: range.end,
       };
-      setStops((prev) => [...prev, stop]);
-      upsertTripStop(toRow(stop)).catch(() => {});
+      setStops((prev) => {
+        const stopWithPos = { ...stop, position: prev.length };
+        upsertTripStop(toRow(stopWithPos)).catch(() => {});
+        return [...prev, stopWithPos];
+      });
     },
     []
   );
@@ -141,17 +174,25 @@ export function TripsProvider({ children }: { children: React.ReactNode }) {
         deleteTripStopsByDestination(destinationId).catch(() => {});
         return false;
       }
-      const stop: TripStop = {
+      const today = todayIso();
+      const base: TripStop = {
         id: nextId.current++,
         destinationId,
-        date: todayIso(),
+        date: today,
         hour: 9,
         minute: 0,
         notes: null,
         visited: false,
+        position: 0,
+        scope: 'day',
+        planStart: today,
+        planEnd: today,
       };
-      setStops((prev) => [...prev, stop]);
-      upsertTripStop(toRow(stop)).catch(() => {});
+      setStops((prev) => {
+        const stop = { ...base, position: prev.length };
+        upsertTripStop(toRow(stop)).catch(() => {});
+        return [...prev, stop];
+      });
       return true;
     },
     [stops]
@@ -160,6 +201,20 @@ export function TripsProvider({ children }: { children: React.ReactNode }) {
   const setVisited = useCallback((id: number, visited: boolean) => {
     setStops((prev) => prev.map((s) => (s.id === id ? { ...s, visited } : s)));
     setTripStopVisited(id, visited).catch(() => {});
+  }, []);
+
+  // Apply a new manual order: `idsInOrder` lists every reordered id in its new
+  // sequence. Positions are rewritten to match and persisted so drag order sticks
+  // across restarts.
+  const reorder = useCallback((idsInOrder: number[]) => {
+    setStops((prev) => {
+      const posById = new Map<number, number>();
+      idsInOrder.forEach((id, i) => posById.set(id, i));
+      return prev.map((s) =>
+        posById.has(s.id) ? { ...s, position: posById.get(s.id)! } : s
+      );
+    });
+    persistPositions(idsInOrder).catch(() => {});
   }, []);
 
   const move = useCallback((from: number, to: number) => {
@@ -181,12 +236,13 @@ export function TripsProvider({ children }: { children: React.ReactNode }) {
       update,
       remove,
       move,
+      reorder,
       isInTrip: (destinationId: number) =>
         stops.some((s) => s.destinationId === destinationId),
       toggleTrip,
       setVisited,
     }),
-    [stops, add, update, remove, move, toggleTrip, setVisited]
+    [stops, add, update, remove, move, reorder, toggleTrip, setVisited]
   );
 
   return <TripsContext.Provider value={value}>{children}</TripsContext.Provider>;
@@ -198,29 +254,3 @@ export function useTrips(): TripsContextValue {
   return ctx;
 }
 
-/* ---------------- date/time formatting (mirrors DateTimeFormatter patterns) ---------------- */
-
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTHS = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-];
-
-export function isoToDate(iso: string): Date {
-  const [y, m, d] = iso.split('-').map(Number);
-  return new Date(y, m - 1, d);
-}
-
-// "EEE, MMM d"
-export function formatDate(iso: string): string {
-  const d = isoToDate(iso);
-  return `${WEEKDAYS[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}`;
-}
-
-// "h:mm a"
-export function formatTime(hour: number, minute: number): string {
-  const period = hour >= 12 ? 'PM' : 'AM';
-  let h = hour % 12;
-  if (h === 0) h = 12;
-  return `${h}:${String(minute).padStart(2, '0')} ${period}`;
-}

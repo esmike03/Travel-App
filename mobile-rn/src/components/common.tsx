@@ -1,6 +1,6 @@
 // Small reusable UI atoms shared across screens (RatingPill, CategoryPill,
 // SavedBadge, StarRow) — ported from the equivalent private composables.
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Linking,
   Pressable,
@@ -13,8 +13,10 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeContext';
 import { withAlpha } from '../theme/colors';
-import { Destination } from '../data/destinations';
+import { Destination, destinationById } from '../data/destinations';
 import { useTrips } from '../context/TripsContext';
+import { PlanPickerSheet } from './PlanPicker';
+import { planLabelOf } from '../utils/planDates';
 import { showToast } from '../utils/toast';
 
 export function RatingPill({
@@ -66,9 +68,10 @@ export function StarRow({ rating, size = 16 }: { rating: number; size?: number }
 }
 
 /**
- * Add/remove a destination from the trip with one tap. `compact` renders a small
- * round icon button (for cards / the map callout); otherwise a labeled pill (for
- * the detail screen).
+ * Add/remove a destination from the trip. Adding opens a sheet to choose which
+ * plan it joins (or create one); removing is immediate. `compact` renders a
+ * small round icon button (for cards / the map callout); otherwise a labeled
+ * pill (for the detail screen).
  */
 export function AddToTripButton({
   destinationId,
@@ -80,21 +83,65 @@ export function AddToTripButton({
   style?: StyleProp<ViewStyle>;
 }) {
   const { colors } = useTheme();
-  const { isInTrip, toggleTrip } = useTrips();
+  const { isInTrip, toggleTrip, add } = useTrips();
+  const [picking, setPicking] = useState(false);
   const inTrip = isInTrip(destinationId);
+  const destination = destinationById(destinationId);
 
   const onPress = () => {
-    const nowIn = toggleTrip(destinationId);
-    showToast(nowIn ? 'Added to your trip' : 'Removed from your trip');
+    // Already in the trip: the button is an undo, so don't ask which plan.
+    if (inTrip) {
+      toggleTrip(destinationId);
+      showToast('Removed from your trip');
+      return;
+    }
+    setPicking(true);
   };
+
+  const sheet = picking ? (
+    <PlanPickerSheet
+      title="Add to which plan?"
+      subtitle={destination?.name}
+      onDismiss={() => setPicking(false)}
+      onPick={(scope, range, date) => {
+        add(destinationId, scope, range, date, 9, 0, null);
+        setPicking(false);
+        showToast(`Added to ${planLabelOf(scope, range)}`);
+      }}
+    />
+  ) : null;
 
   if (compact) {
     return (
+      <>
+        <Pressable
+          onPress={onPress}
+          hitSlop={8}
+          style={[
+            styles.tripCompact,
+            {
+              backgroundColor: inTrip ? colors.primary : withAlpha(colors.primary, 0.14),
+            },
+            style,
+          ]}
+        >
+          <MaterialIcons
+            name={inTrip ? 'event-available' : 'add'}
+            size={20}
+            color={inTrip ? colors.onPrimary : colors.primary}
+          />
+        </Pressable>
+        {sheet}
+      </>
+    );
+  }
+
+  return (
+    <>
       <Pressable
         onPress={onPress}
-        hitSlop={8}
         style={[
-          styles.tripCompact,
+          styles.tripPill,
           {
             backgroundColor: inTrip ? colors.primary : withAlpha(colors.primary, 0.14),
           },
@@ -103,39 +150,21 @@ export function AddToTripButton({
       >
         <MaterialIcons
           name={inTrip ? 'event-available' : 'add'}
-          size={20}
+          size={18}
           color={inTrip ? colors.onPrimary : colors.primary}
         />
+        <Text
+          style={{
+            fontSize: 14,
+            fontWeight: '600',
+            color: inTrip ? colors.onPrimary : colors.primary,
+          }}
+        >
+          {inTrip ? 'In your trip' : 'Add to trip'}
+        </Text>
       </Pressable>
-    );
-  }
-
-  return (
-    <Pressable
-      onPress={onPress}
-      style={[
-        styles.tripPill,
-        {
-          backgroundColor: inTrip ? colors.primary : withAlpha(colors.primary, 0.14),
-        },
-        style,
-      ]}
-    >
-      <MaterialIcons
-        name={inTrip ? 'event-available' : 'add'}
-        size={18}
-        color={inTrip ? colors.onPrimary : colors.primary}
-      />
-      <Text
-        style={{
-          fontSize: 14,
-          fontWeight: '600',
-          color: inTrip ? colors.onPrimary : colors.primary,
-        }}
-      >
-        {inTrip ? 'In your trip' : 'Add to trip'}
-      </Text>
-    </Pressable>
+      {sheet}
+    </>
   );
 }
 

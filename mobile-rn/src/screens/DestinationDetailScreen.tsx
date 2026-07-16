@@ -33,6 +33,7 @@ import {
   openSource,
 } from '../components/common';
 import { showToast } from '../utils/toast';
+import { WeatherCard } from '../components/Weather';
 
 interface Review {
   author: string;
@@ -89,9 +90,11 @@ function sampleReviewsFor(destination: Destination): Review[] {
 export default function DestinationDetailScreen({
   destinationId,
   onBack,
+  onNavigate,
 }: {
   destinationId: number;
   onBack: () => void;
+  onNavigate: () => void;
 }) {
   const { colors } = useTheme();
   const { isFavorite, toggle } = useFavorites();
@@ -116,9 +119,10 @@ export default function DestinationDetailScreen({
   const eta = distance !== null ? estimateEtaMinutes(distance) : null;
 
   return (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={{ paddingBottom: 32 }}
+      contentContainerStyle={{ paddingBottom: 96 }}
     >
       {/* Hero */}
       <View style={{ width: '100%', height: 320 }}>
@@ -196,6 +200,11 @@ export default function DestinationDetailScreen({
         <AddToTripButton destinationId={destination.id} />
       </View>
 
+      <SectionTitle title="Weather" />
+      <View style={{ paddingHorizontal: 20 }}>
+        <WeatherCard destinationId={destination.id} />
+      </View>
+
       <SectionTitle title="About" />
       <Text
         style={{
@@ -232,6 +241,16 @@ export default function DestinationDetailScreen({
         </>
       ) : null}
     </ScrollView>
+
+      {/* Live-navigation FAB */}
+      <Pressable
+        onPress={onNavigate}
+        style={[styles.navFab, { bottom: insets.bottom + 20, backgroundColor: colors.primary }]}
+      >
+        <MaterialIcons name="navigation" size={22} color={colors.onPrimary} />
+        <Text style={{ color: colors.onPrimary, fontWeight: '700', fontSize: 15 }}>Navigate</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -626,5 +645,20 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 20,
     paddingVertical: 16,
+  },
+  navFab: {
+    position: 'absolute',
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: 54,
+    paddingHorizontal: 22,
+    borderRadius: 27,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
   },
 });
