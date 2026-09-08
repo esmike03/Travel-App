@@ -45,7 +45,13 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
           planKey TEXT PRIMARY KEY,
           targetBudget REAL,
           notes TEXT,
-          items TEXT
+          items TEXT,
+          title TEXT,
+          origin TEXT,
+          departureAt TEXT,
+          destinationName TEXT,
+          travelerCount INTEGER NOT NULL DEFAULT 2,
+          travelerNames TEXT
         );
         -- Single-row cache (id = 1) of the last weather fetch, so the forecast
         -- still shows on the road with no signal instead of an empty card.
@@ -73,6 +79,15 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
           longitude REAL NOT NULL,
           sourceUrl TEXT
         );
+        -- Permanent on-device check-in history. It is intentionally separate
+        -- from trip_stops so removing an itinerary item does not erase a visit.
+        CREATE TABLE IF NOT EXISTS visit_history (
+          visitKey TEXT PRIMARY KEY,
+          destinationId INTEGER NOT NULL,
+          visitedAt INTEGER NOT NULL,
+          visitDate TEXT NOT NULL,
+          planKey TEXT NOT NULL
+        );
       `);
       // Migration for databases created before `position` existed.
       try {
@@ -97,6 +112,24 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
       for (const col of ['planStart', 'planEnd']) {
         try {
           await db.execAsync(`ALTER TABLE trip_stops ADD COLUMN ${col} TEXT`);
+        } catch {
+          // Column already exists — ignore.
+        }
+      }
+      // Plan identity and journey details were added after budgets/notes. Keep
+      // the migration additive so every existing local trip remains intact.
+      for (const statement of [
+        'ALTER TABLE plans ADD COLUMN title TEXT',
+        'ALTER TABLE plans ADD COLUMN origin TEXT',
+        'ALTER TABLE plans ADD COLUMN departureAt TEXT',
+        'ALTER TABLE plans ADD COLUMN destinationName TEXT',
+        'ALTER TABLE plans ADD COLUMN travelerCount INTEGER NOT NULL DEFAULT 2',
+        // JSON string[]; null on rows written before people could be named, and
+        // backfilled from travelerCount on load.
+        'ALTER TABLE plans ADD COLUMN travelerNames TEXT',
+      ]) {
+        try {
+          await db.execAsync(statement);
         } catch {
           // Column already exists — ignore.
         }
@@ -159,6 +192,33 @@ export async function persistPositions(idsInOrder: number[]): Promise<void> {
   });
 }
 
+/* ---------------- Explored-place history ---------------- */
+
+export interface VisitHistoryRow {
+  visitKey: string;
+  destinationId: number;
+  visitedAt: number;
+  visitDate: string;
+  planKey: string;
+}
+
+export async function loadVisitHistory(): Promise<VisitHistoryRow[]> {
+  const db = await getDb();
+  return db.getAllAsync<VisitHistoryRow>(
+    'SELECT * FROM visit_history ORDER BY visitedAt DESC'
+  );
+}
+
+export async function recordVisit(row: VisitHistoryRow): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT OR IGNORE INTO visit_history
+       (visitKey, destinationId, visitedAt, visitDate, planKey)
+     VALUES (?, ?, ?, ?, ?)`,
+    [row.visitKey, row.destinationId, row.visitedAt, row.visitDate, row.planKey]
+  );
+}
+
 /* ---------------- Favorites ---------------- */
 
 export async function loadFavorites(): Promise<number[]> {
@@ -189,6 +249,12 @@ export interface PlanMetaRow {
   targetBudget: number | null;
   notes: string | null;
   items: string | null; // JSON-encoded BudgetItem[]
+  title: string | null;
+  origin: string | null;
+  departureAt: string | null;
+  destinationName: string | null;
+  travelerCount: number | null;
+  travelerNames: string | null; // JSON-encoded string[]
 }
 
 export async function loadPlanMetas(): Promise<PlanMetaRow[]> {
@@ -199,9 +265,21 @@ export async function loadPlanMetas(): Promise<PlanMetaRow[]> {
 export async function upsertPlanMeta(row: PlanMetaRow): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    `INSERT OR REPLACE INTO plans (planKey, targetBudget, notes, items)
-     VALUES (?, ?, ?, ?)`,
-    [row.planKey, row.targetBudget, row.notes, row.items]
+    `INSERT OR REPLACE INTO plans
+       (planKey, targetBudget, notes, items, title, origin, departureAt, destinationName, travelerCount, travelerNames)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      row.planKey,
+      row.targetBudget,
+      row.notes,
+      row.items,
+      row.title,
+      row.origin,
+      row.departureAt,
+      row.destinationName,
+      row.travelerCount,
+      row.travelerNames,
+    ]
   );
 }
 

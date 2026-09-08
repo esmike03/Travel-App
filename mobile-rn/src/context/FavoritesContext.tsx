@@ -12,6 +12,8 @@ import { loadFavorites, addFavorite, removeFavorite } from '../data/db';
 
 interface FavoritesContextValue {
   ids: number[];
+  /** True until the first SQLite read finishes. */
+  loading: boolean;
   isFavorite: (id: number) => boolean;
   toggle: (id: number) => boolean; // returns the new saved state
 }
@@ -22,6 +24,7 @@ const FavoritesContext = createContext<FavoritesContextValue | undefined>(
 
 export function FavoritesProvider({ children }: { children: React.ReactNode }) {
   const [ids, setIds] = useState<number[]>([]);
+  const [loading, setLoading] = useState(true);
 
   // Hydrate saved places from SQLite on mount.
   useEffect(() => {
@@ -32,6 +35,8 @@ export function FavoritesProvider({ children }: { children: React.ReactNode }) {
         if (active) setIds(saved);
       } catch {
         // DB unavailable — continue in-memory only.
+      } finally {
+        if (active) setLoading(false);
       }
     })();
     return () => {
@@ -57,10 +62,11 @@ export function FavoritesProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<FavoritesContextValue>(
     () => ({
       ids,
+      loading,
       isFavorite: (id: number) => ids.includes(id),
       toggle,
     }),
-    [ids, toggle]
+    [ids, loading, toggle]
   );
 
   return (

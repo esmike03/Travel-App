@@ -60,9 +60,11 @@ export function groupPlans(stops: TripStop[]): StopGroup[] {
     .map((g) => ({ ...g, stops: [...g.stops].sort(byPosition) }));
 }
 
-// A plan lands in the archive once every stop is visited OR its dates have passed
-// (a missed plan). Past plans keep their unvisited stops as-is (not visited).
+// A plan lands in the archive purely on the calendar: once its last day is
+// behind us. Finishing every stop early does NOT archive it — the plan stays
+// live for the rest of its dates, so stops can still be added, reordered or
+// un-ticked. Past plans keep their unvisited stops as-is (not visited).
 export function isArchived(group: StopGroup): boolean {
   if (group.stops.length === 0) return false;
-  return group.isPast || group.stops.every((s) => s.visited);
+  return group.isPast;
 }

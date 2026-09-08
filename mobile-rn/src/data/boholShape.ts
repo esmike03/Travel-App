@@ -38,3 +38,13 @@ export function projectToShape(longitude: number, latitude: number): { x: number
     y: (MAX_LAT - latitude) * SCALE + OFF_Y, // SVG y grows downward
   };
 }
+
+// The curated Bohol shape as the same Silhouette shape the share card uses for
+// every other province — so home and away render through one code path.
+import type { Silhouette } from './silhouette';
+
+export const BOHOL_SILHOUETTE: Silhouette = {
+  view: SHAPE_VIEW,
+  paths: BOHOL_PATHS,
+  project: projectToShape,
+};

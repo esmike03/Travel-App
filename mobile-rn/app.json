@@ -1,27 +1,28 @@
 {
   "expo": {
-    "name": "Travs",
+    "name": "Chirpy - Your Travel Companion",
     "slug": "travs-bohol",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
-    "scheme": "travs",
-    "newArchEnabled": true,
-    "splash": {
-      "backgroundColor": "#1F7A4D"
-    },
+    "scheme": "chirpy",
+    "icon": "./assets/branding/chirpy-app-icon.png",
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.travs.bohol",
+      "bundleIdentifier": "com.chirpy.travel",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Travs uses your location to show distance and ETA to Bohol destinations and to sort nearby spots."
+        "NSLocationWhenInUseUsageDescription": "Chirpy uses your location to show nearby destinations, distance, and travel times."
       }
     },
     "android": {
-      "package": "com.travs.bohol",
+      "package": "com.chirpy.travel",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/branding/chirpy-adaptive-icon.png",
+        "backgroundColor": "#FFF8E8"
+      },
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
@@ -33,29 +34,42 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Travs uses your location to show distance and ETA to Bohol destinations and to sort nearby spots."
+          "locationWhenInUsePermission": "Chirpy uses your location to show nearby destinations, distance, and travel times."
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "Travs lets you add one of your own photos to the card you share after visiting a place.",
-          "cameraPermission": "Travs lets you take a photo for the card you share after visiting a place."
+          "photosPermission": "Chirpy lets you add one of your own photos to a trip card.",
+          "cameraPermission": "Chirpy lets you take a photo for a trip card."
         }
       ],
       [
         "expo-media-library",
         {
-          "photosPermission": "Travs saves your shareable trip card to your photos.",
-          "savePhotosPermission": "Travs saves your shareable trip card to your photos.",
+          "photosPermission": "Chirpy saves your shareable trip card to your photos.",
+          "savePhotosPermission": "Chirpy saves your shareable trip card to your photos.",
           "isAccessMediaLocationEnabled": false
         }
       ],
       "@react-native-community/datetimepicker",
       "expo-asset",
       "expo-font",
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-sharing",
+      "expo-status-bar",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/branding/chirpy-walking.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#FFF8E8"
+        }
+      ]
     ],
+    "web": {
+      "favicon": "./assets/branding/chirpy-app-icon.png"
+    },
     "extra": {
       "eas": {
         "projectId": "3df0fd39-b724-4c44-acdc-5d33c2feb5a7"

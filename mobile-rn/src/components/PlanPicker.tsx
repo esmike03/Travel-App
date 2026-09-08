@@ -400,8 +400,15 @@ function PlanRow({ group, onPress }: { group: StopGroup; onPress: () => void }) 
 }
 
 const styles = StyleSheet.create({
-  scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  // Full-bleed scrim, so the sheet's rounded top corners sit on dimmed backdrop
+  // rather than cutting through to the page underneath. See PlanListSheet.
+  scrim: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.4)' },
   sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: '100%',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 20,

@@ -12,6 +12,7 @@ import { withAlpha } from '../theme/colors';
 import { PlanScope } from '../utils/planDates';
 import { StopGroup, isArchived } from '../utils/plans';
 import { SCOPE_META } from './PlanPicker';
+import { tripTitle, usePlans } from '../context/PlansContext';
 
 const VISITED_GREEN = '#16A34A';
 
@@ -195,10 +196,12 @@ function PlanRow({
   onOpenMap: () => void;
 }) {
   const { colors } = useTheme();
+  const { getMeta } = usePlans();
   const meta = SCOPE_META[group.scope];
   const count = group.stops.length;
   const archived = isArchived(group);
-  const completed = archived && group.stops.every((s) => s.visited);
+  const completed = count > 0 && group.stops.every((s) => s.visited);
+  const title = tripTitle(getMeta(group.key));
 
   return (
     <Pressable
@@ -233,16 +236,22 @@ function PlanRow({
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text
             numberOfLines={1}
-            style={{ flex: 1, fontSize: 14, fontWeight: '700', color: colors.onSurface }}
+            style={{
+              flex: 1,
+              fontSize: 14,
+              fontWeight: '700',
+              color: colors.onSurface,
+              textDecorationLine: completed ? 'line-through' : 'none',
+            }}
           >
-            {group.label}
+            {title}
           </Text>
           {group.isCurrent && !archived ? <Badge text="TODAY" color={colors.secondary} /> : null}
           {completed ? <Badge text="DONE" color={VISITED_GREEN} /> : null}
           {archived && !completed ? <Badge text="PAST" color={colors.error} /> : null}
         </View>
         <Text style={{ fontSize: 11, color: colors.onSurfaceVariant }}>
-          {meta.label} plan · {count} {count === 1 ? 'stop' : 'stops'}
+          {group.label} · {meta.label} plan · {count} {count === 1 ? 'stop' : 'stops'}
         </Text>
       </View>
 
@@ -326,8 +335,16 @@ function ViewTab({
 }
 
 const styles = StyleSheet.create({
-  scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  // The scrim covers the whole modal, including behind the sheet — a flex:1
+  // scrim stops where the sheet starts, so the rounded top corners cut straight
+  // through to the screen underneath and read as square against a light page.
+  scrim: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.4)' },
   sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: '100%',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 20,

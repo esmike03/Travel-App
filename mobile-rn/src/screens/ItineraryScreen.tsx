@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialIcons } from '@expo/vector-icons';
+import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
 import { useTheme } from '../theme/ThemeContext';
 import { withAlpha } from '../theme/colors';
 import { destinations, destinationById, distanceKm, Destination } from '../data/destinations';
@@ -23,7 +24,15 @@ import { useTrips, TripStop } from '../context/TripsContext';
 import { useRegionSetting } from '../context/RegionContext';
 import { usePlaces } from '../context/PlacesContext';
 import { PlaceHit, searchPlaces } from '../data/places';
-import { PlanScope, PlanRange, formatDate, formatTime, isoToDate } from '../utils/planDates';
+import {
+  PlanScope,
+  PlanRange,
+  formatDate,
+  formatTime,
+  isoToDate,
+  planKeyOf,
+  todayIso,
+} from '../utils/planDates';
 import { StopGroup, groupPlans, isArchived } from '../utils/plans';
 import {
   PlanDraft,
@@ -34,21 +43,25 @@ import {
   stopDateFor,
 } from '../components/PlanPicker';
 import { useUserLocation, Coords } from '../hooks/useUserLocation';
-import { usePlans, budgetSpent } from '../context/PlansContext';
+import { usePlans, budgetSpent, tripTitle } from '../context/PlansContext';
 import { estimateEtaMinutes, formatDistance, formatEta, formatKm } from '../utils/format';
 import { routeSuggestion } from '../utils/route';
 import { showToast } from '../utils/toast';
 import TripDayMap from './TripDayMap';
 import PlanDetailsModal from './PlanDetailsModal';
-import ShareVisitModal from '../components/ShareCard';
+import ShareVisitModal, { ShareStopModal } from '../components/ShareCard';
 import { PlanWeatherBanner, StopWeatherPill } from '../components/Weather';
 import PlanListSheet from '../components/PlanListSheet';
+import ChirpyPeek, { CHIRPY_PEEK_LANE } from '../components/ChirpyPeek';
+import SkeletonList from '../components/Skeleton';
 
 const VISITED_GREEN = '#16A34A';
+const CHIRPY_GUIDE = require('../../assets/branding/chirpy-guide.png');
 
 export default function ItineraryScreen() {
   const { colors } = useTheme();
-  const { stops, add, update, remove, setVisited, reorder } = useTrips();
+  const { stops, loading, add, update, remove, setVisited, reorder } = useTrips();
+  const { getMeta, setMeta } = usePlans();
   const { location, hasPermission, request } = useUserLocation();
   // Subscribing keeps this screen (and the map, share card and details modal it
   // renders) in step with the custom-place registry: a stop pointing at a place
@@ -62,6 +75,8 @@ export default function ItineraryScreen() {
   const [editingStop, setEditingStop] = useState<TripStop | null>(null);
   const [detailsGroup, setDetailsGroup] = useState<StopGroup | null>(null);
   const [sharingKey, setSharingKey] = useState<string | null>(null);
+  // A single stop being shared on its own card, separate from the plan card.
+  const [sharingStop, setSharingStop] = useState<TripStop | null>(null);
   // The open map is tracked by plan key, not by a copy of its stops, so a
   // reorder made from the map redraws the route instead of going stale.
   const [mapView, setMapView] = useState<{ key: string; withUser: boolean } | null>(null);
@@ -91,18 +106,6 @@ export default function ItineraryScreen() {
       reorder(fullIds);
     },
     [groups, reorder]
-  );
-
-  // Move a single stop up/down within its group.
-  const moveWithinGroup = useCallback(
-    (group: StopGroup, fromIdx: number, toIdx: number) => {
-      if (toIdx < 0 || toIdx >= group.stops.length) return;
-      const next = [...group.stops];
-      const [moved] = next.splice(fromIdx, 1);
-      next.splice(toIdx, 0, moved);
-      applyGroupOrder(group.key, next);
-    },
-    [applyGroupOrder]
   );
 
   // Mark any stop within ~300 m of the given coords as visited.
@@ -136,86 +139,81 @@ export default function ItineraryScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      {stops.length === 0 ? (
+      {loading ? (
+        // Stops arrive from SQLite a beat after mount; without this the empty
+        // state flashes up and is immediately replaced by the real plan.
+        <SkeletonList rows={3} />
+      ) : stops.length === 0 ? (
         <EmptyTripsState onAdd={() => setShowPicker(true)} />
       ) : (
-        <ScrollView
+        // The stop list is the only scroller on this page. It used to be a
+        // non-scrolling list nested in a NestableScrollContainer, which stopped
+        // scrolling altogether once a plan had enough stops to fill the screen —
+        // the inner VirtualizedList swallowed the pan. Everything above the
+        // stops rides along as the list header instead.
+        <DraggableFlatList
+          data={shownGroup?.stops ?? []}
+          keyExtractor={(item) => String(item.id)}
+          activationDistance={8}
           contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 24, paddingBottom: 170 }}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 32, fontWeight: '700', color: colors.onBackground }}>
-                {shownGroup?.isCurrent ? 'Today' : 'My trip'}
-              </Text>
-              <Text style={{ fontSize: 12, color: colors.onSurfaceVariant, marginTop: 4 }}>
-                {activeGroups.length} {activeGroups.length === 1 ? 'plan' : 'plans'} ·{' '}
-                {stops.length} {stops.length === 1 ? 'stop' : 'stops'}
-              </Text>
-            </View>
-          </View>
-
-          {shownGroup ? (
-            <View style={{ marginTop: 18 }}>
-              <GroupHeader
-                planKey={shownGroup.key}
-                label={shownGroup.label}
-                scope={shownGroup.scope}
-                count={shownGroup.stops.length}
-                archived={shownArchived}
-                archivedReason={
-                  shownArchived
-                    ? shownGroup.stops.every((s) => s.visited)
-                      ? 'completed'
-                      : 'missed'
-                    : undefined
-                }
-                isCurrent={shownGroup.isCurrent}
-                canShare={shownGroup.stops.some((s) => s.visited)}
-                onShare={() => setSharingKey(shownGroup.key)}
-                onOpenDetails={() => setDetailsGroup(shownGroup)}
-                onOpenMap={() => setMapView({ key: shownGroup.key, withUser: false })}
-              />
-              {!shownArchived ? <PlanWeatherBanner stops={shownGroup.stops} /> : null}
-              {suggestion ? (
-                <SuggestionBanner
-                  savedKm={suggestion.savedKm}
-                  onApply={() => {
-                    applyGroupOrder(shownGroup.key, suggestion.optimized);
-                    showToast(`Reordered — about ${formatKm(suggestion.savedKm)} less travel`);
-                  }}
+          onDragEnd={({ data, from, to }) => {
+            if (shownGroup && from !== to) applyGroupOrder(shownGroup.key, data);
+          }}
+          ListHeaderComponent={
+            shownGroup ? (
+              <>
+                <PlanHeader
+                  planKey={shownGroup.key}
+                  dateLabel={shownGroup.label}
+                  scope={shownGroup.scope}
+                  count={shownGroup.stops.length}
+                  completed={shownGroup.stops.every((stop) => stop.visited)}
+                  archived={shownArchived}
+                  archivedReason={
+                    shownArchived
+                      ? shownGroup.stops.every((s) => s.visited)
+                        ? 'completed'
+                        : 'missed'
+                      : undefined
+                  }
+                  isCurrent={shownGroup.isCurrent}
+                  canShare={shownGroup.stops.some((s) => s.visited)}
+                  onShare={() => setSharingKey(shownGroup.key)}
+                  onOpenDetails={() => setDetailsGroup(shownGroup)}
                 />
-              ) : null}
-              <View style={{ height: 12 }} />
-              {shownGroup.stops.map((item, idx) => {
-                const destination = destinationById(item.destinationId);
-                if (!destination) return null;
-                const next = shownGroup.stops[idx + 1];
-                const nextDest = next ? destinationById(next.destinationId) : undefined;
-                return (
-                  <React.Fragment key={item.id}>
-                    <StopCard
-                      order={idx + 1}
-                      stop={item}
-                      destination={destination}
-                      archived={shownArchived}
-                      canMoveUp={!shownArchived && idx > 0}
-                      canMoveDown={!shownArchived && idx < shownGroup.stops.length - 1}
-                      onMoveUp={() => moveWithinGroup(shownGroup, idx, idx - 1)}
-                      onMoveDown={() => moveWithinGroup(shownGroup, idx, idx + 1)}
-                      onEdit={() => setEditingStop(item)}
-                      onRemove={() => remove(item.id)}
-                      onToggleVisited={() => setVisited(item.id, !item.visited)}
-                    />
-                    {nextDest ? (
-                      <LegConnector fromDest={destination} toDest={nextDest} />
-                    ) : (
-                      <View style={{ height: 14 }} />
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </View>
-          ) : (
+                <TripOverviewCard
+                  group={shownGroup}
+                  onOpenDetails={() => setDetailsGroup(shownGroup)}
+                />
+                {!shownArchived ? <PlanWeatherBanner stops={shownGroup.stops} /> : null}
+                {suggestion ? (
+                  <SuggestionBanner
+                    savedKm={suggestion.savedKm}
+                    onApply={() => {
+                      applyGroupOrder(shownGroup.key, suggestion.optimized);
+                      showToast(`Reordered — about ${formatKm(suggestion.savedKm)} less travel`);
+                    }}
+                  />
+                ) : null}
+                <RouteHeading
+                  canReorder={!shownArchived && shownGroup.stops.length > 1}
+                />
+              </>
+            ) : (
+              // No plan on the page: the counts are worth showing here, because
+              // the empty state below is about to send you to the plans list.
+              <View style={styles.pageHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.pageTitle, { color: colors.onBackground }]}>Today</Text>
+                  <Text style={[styles.pageMeta, { color: colors.onSurfaceVariant }]}>
+                    {activeGroups.length} {activeGroups.length === 1 ? 'plan' : 'plans'} ·{' '}
+                    {stops.length} {stops.length === 1 ? 'stop' : 'stops'}
+                  </Text>
+                </View>
+              </View>
+            )
+          }
+          ListEmptyComponent={
             // Nothing is happening today — say so plainly and point at the plans
             // list rather than dumping every other plan onto the page.
             <View style={{ alignItems: 'center', paddingVertical: 56, gap: 10 }}>
@@ -256,28 +254,92 @@ export default function ItineraryScreen() {
                 </Pressable>
               ) : null}
             </View>
-          )}
-        </ScrollView>
+          }
+          renderItem={({ item, drag, isActive, getIndex }) => {
+            const idx = getIndex() ?? 0;
+            const destination = destinationById(item.destinationId);
+            if (!destination) return null;
+            const next = shownGroup?.stops[idx + 1];
+            const nextDest = next ? destinationById(next.destinationId) : undefined;
+            return (
+              <ScaleDecorator activeScale={1.025}>
+                <View style={{ opacity: isActive ? 0.96 : 1 }}>
+                  <StopCard
+                    order={idx + 1}
+                    stop={item}
+                    destination={destination}
+                    archived={shownArchived}
+                    drag={
+                      !shownArchived && (shownGroup?.stops.length ?? 0) > 1 ? drag : undefined
+                    }
+                    isDragging={isActive}
+                    onEdit={() => setEditingStop(item)}
+                    onRemove={() => remove(item.id)}
+                    onToggleVisited={() => setVisited(item.id, !item.visited)}
+                    onShare={() => setSharingStop(item)}
+                  />
+                  {nextDest ? (
+                    <LegConnector fromDest={destination} toDest={nextDest} />
+                  ) : (
+                    <View style={{ height: 14 }} />
+                  )}
+                </View>
+              </ScaleDecorator>
+            );
+          }}
+        />
       )}
 
-      {/* A column of matching FABs. Start is always live for the plan on screen
-          — no selecting it first. */}
+      {/* A single floating action dock keeps the common trip actions together. */}
       {stops.length > 0 ? (
-        <View style={styles.fabStack}>
-          <MiniFab icon="list" label="Plans" onPress={() => setShowPlanList(true)} />
-          <MiniFab icon="add" label="Add stops" onPress={() => setShowPicker(true)} />
-          {shownGroup && !shownArchived ? (
-            <Pressable
-              onPress={handleStart}
-              style={[styles.fab, styles.startFab, { backgroundColor: colors.primary }]}
-            >
-              <MaterialIcons name="navigation" size={20} color={colors.onPrimary} />
-              <Text style={{ color: colors.onPrimary, fontWeight: '700', fontSize: 15 }}>
-                Start plan
-              </Text>
-            </Pressable>
-          ) : null}
+        <View
+          pointerEvents="box-none"
+          style={[styles.fabDock, !shownGroup ? styles.fabDockCompact : null]}
+        >
+          <View style={[styles.fabDockBar, { backgroundColor: colors.surface }]}>
+            <DockAction icon="list" label="Plans" onPress={() => setShowPlanList(true)} />
+            <DockAction icon="add" label="Add" onPress={() => setShowPicker(true)} />
+            {shownGroup ? (
+              <>
+                <DockAction
+                  icon="savings"
+                  label="Budget"
+                  onPress={() => setDetailsGroup(shownGroup)}
+                />
+                <DockAction
+                  icon="map"
+                  label="Map"
+                  onPress={() => setMapView({ key: shownGroup.key, withUser: false })}
+                />
+              </>
+            ) : null}
+            {shownGroup && !shownArchived ? (
+              <Pressable
+                onPress={handleStart}
+                style={({ pressed }) => [
+                  styles.startFab,
+                  { backgroundColor: colors.primary, opacity: pressed ? 0.88 : 1 },
+                ]}
+              >
+                <MaterialIcons name="navigation" size={20} color={colors.onPrimary} />
+                <Text style={{ color: colors.onPrimary, fontWeight: '800', fontSize: 13 }}>
+                  Start
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
+      ) : null}
+
+      {/* Nothing on today's page — Chirpy peeks in over the dock to explain. */}
+      {stops.length > 0 && !shownGroup ? (
+        <ChirpyPeek
+          message={
+            activeGroups.length > 0
+              ? 'Your other plans are still here — tap Plans to open one.'
+              : 'Nothing on today. Tap Add to start a new plan!'
+          }
+        />
       ) : null}
 
       {showPlanList ? (
@@ -304,11 +366,19 @@ export default function ItineraryScreen() {
         <DestinationPicker
           existingIds={new Set(stops.map((s) => s.destinationId))}
           onDismiss={() => setShowPicker(false)}
-          onConfirm={(selectedIds, scope, range, baseDate) => {
+          onConfirm={(selectedIds, scope, range, baseDate, details) => {
             // A stop's own date must sit inside its plan's range; each stop can
             // then be moved to another day in that range from the stop editor.
             const date = stopDateFor(range, baseDate);
             selectedIds.forEach((id) => add(id, scope, range, date, 9, 0, null));
+            const planKey = planKeyOf(scope, range);
+            const current = getMeta(planKey);
+            setMeta(planKey, {
+              title: current.title ?? details.title,
+              origin: current.origin ?? details.origin,
+              departureAt: current.departureAt ?? details.departureAt,
+              destinationName: current.destinationName ?? details.destinationName,
+            });
             setShowPicker(false);
           }}
         />
@@ -327,7 +397,7 @@ export default function ItineraryScreen() {
 
       {mapView && mapGroup ? (
         <TripDayMap
-          title={mapGroup.label}
+          title={tripTitle(getMeta(mapGroup.key))}
           stops={mapGroup.stops}
           userLocation={mapView.withUser ? location : null}
           // Archived plans are read-only, so they get no reorder banner.
@@ -347,10 +417,19 @@ export default function ItineraryScreen() {
         <ShareVisitModal group={sharingGroup} onClose={() => setSharingKey(null)} />
       ) : null}
 
+      {sharingStop ? (
+        <ShareStopModal
+          destinationId={sharingStop.destinationId}
+          date={sharingStop.date}
+          visited={sharingStop.visited}
+          onClose={() => setSharingStop(null)}
+        />
+      ) : null}
+
       {detailsGroup ? (
         <PlanDetailsModal
           planKey={detailsGroup.key}
-          label={detailsGroup.label}
+          label={tripTitle(getMeta(detailsGroup.key))}
           scope={detailsGroup.scope}
           stops={detailsGroup.stops}
           onClose={() => setDetailsGroup(null)}
@@ -362,7 +441,7 @@ export default function ItineraryScreen() {
 
 // A secondary FAB: same pill shape as Start, in surface colours so the primary
 // action still reads as the primary one.
-function MiniFab({
+function DockAction({
   icon,
   label,
   onPress,
@@ -376,13 +455,12 @@ function MiniFab({
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      style={[
-        styles.fab,
-        { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.outlineVariant },
-      ]}
+      style={({ pressed }) => [styles.dockAction, { opacity: pressed ? 0.65 : 1 }]}
     >
-      <MaterialIcons name={icon} size={18} color={colors.primary} />
-      <Text style={{ fontSize: 14, fontWeight: '600', color: colors.primary }}>{label}</Text>
+      <View style={[styles.dockActionIcon, { backgroundColor: withAlpha(colors.primary, 0.11) }]}>
+        <MaterialIcons name={icon} size={19} color={colors.primary} />
+      </View>
+      <Text style={{ fontSize: 10, fontWeight: '700', color: colors.onSurfaceVariant }}>{label}</Text>
     </Pressable>
   );
 }
@@ -445,147 +523,332 @@ const CURRENT_BADGE: Record<PlanScope, string> = {
   month: 'This month',
 };
 
-function GroupHeader({
+// The page's one title block. It used to be two: a page heading with its own
+// counts, and a plan heading underneath repeating the stop count and the plan's
+// state — which the journey card below then said a third time.
+function PlanHeader({
   planKey,
-  label,
+  dateLabel,
   scope,
   count,
+  completed,
   archived,
   archivedReason,
   isCurrent,
   canShare,
   onOpenDetails,
-  onOpenMap,
   onShare,
 }: {
   planKey: string;
-  label: string;
+  dateLabel: string;
   scope: PlanScope;
   count: number;
+  completed: boolean;
   archived?: boolean;
   archivedReason?: 'completed' | 'missed';
   isCurrent?: boolean;
   canShare?: boolean;
   onOpenDetails: () => void;
-  onOpenMap: () => void;
   onShare: () => void;
 }) {
   const { colors } = useTheme();
   const { getMeta } = usePlans();
-  const meta = SCOPE_META[scope];
-  const planMeta = getMeta(planKey);
-  const spent = budgetSpent(planMeta);
-  const budgetLabel =
-    planMeta.targetBudget != null
-      ? `${pesoShort(spent)} / ${pesoShort(planMeta.targetBudget)}`
-      : spent > 0
-      ? pesoShort(spent)
+  const title = tripTitle(getMeta(planKey));
+  const scopeLabel = SCOPE_META[scope].label;
+  const live = !!isCurrent && !archived;
+
+  // Exactly one badge. A scope pill, a state badge and a status pill used to sit
+  // within a few pixels of each other saying overlapping things; scope moved
+  // down into the meta line, where it costs one word instead of a chip.
+  const badge = archived
+    ? archivedReason === 'completed'
+      ? {
+          label: 'Completed',
+          icon: 'check-circle' as const,
+          fg: VISITED_GREEN,
+          bg: withAlpha(VISITED_GREEN, 0.16),
+        }
+      : {
+          label: 'Past',
+          icon: 'history' as const,
+          fg: colors.error,
+          bg: withAlpha(colors.error, 0.14),
+        }
+    : live
+      ? {
+          label: CURRENT_BADGE[scope],
+          icon: 'bolt' as const,
+          fg: colors.onSecondary,
+          bg: colors.secondary,
+        }
       : null;
-  const overBudget = planMeta.targetBudget != null && spent > planMeta.targetBudget;
 
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-      {/* The page shows one plan, so the header no longer folds or selects —
-          tapping it opens that plan's details. */}
-      <Pressable
-        style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}
-        onPress={onOpenDetails}
-      >
-        <View style={{ flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 3,
-                borderRadius: 50,
-                backgroundColor: withAlpha(colors.primary, 0.14),
-                paddingHorizontal: 8,
-                paddingVertical: 2,
-              }}
-            >
-              <MaterialIcons name={meta.icon} size={12} color={colors.primary} />
-              <Text style={{ fontSize: 10, fontWeight: '700', color: colors.primary }}>
-                {meta.label}
-              </Text>
+    <View style={styles.pageHeader}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={styles.titleRow}>
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.pageTitle,
+              {
+                color: colors.onBackground,
+                textDecorationLine: completed ? 'line-through' : 'none',
+              },
+            ]}
+          >
+            {live ? 'Today' : title}
+          </Text>
+          {badge ? (
+            <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
+              <MaterialIcons name={badge.icon} size={11} color={badge.fg} />
+              <Text style={[styles.statusBadgeText, { color: badge.fg }]}>{badge.label}</Text>
             </View>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: colors.onSurface }}>{label}</Text>
-            {isCurrent && !archived ? (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 3,
-                  borderRadius: 50,
-                  backgroundColor: colors.secondary,
-                  paddingHorizontal: 8,
-                  paddingVertical: 2,
-                }}
-              >
-                <MaterialIcons name="bolt" size={12} color={colors.onSecondary} />
-                <Text style={{ fontSize: 10, fontWeight: '800', color: colors.onSecondary }}>
-                  {CURRENT_BADGE[scope]}
-                </Text>
-              </View>
-            ) : null}
-            {archived && archivedReason === 'completed' ? (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 3,
-                  borderRadius: 50,
-                  backgroundColor: withAlpha(VISITED_GREEN, 0.16),
-                  paddingHorizontal: 8,
-                  paddingVertical: 2,
-                }}
-              >
-                <MaterialIcons name="check-circle" size={12} color={VISITED_GREEN} />
-                <Text style={{ fontSize: 10, fontWeight: '700', color: VISITED_GREEN }}>Completed</Text>
-              </View>
-            ) : null}
-            {archived && archivedReason === 'missed' ? (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 3,
-                  borderRadius: 50,
-                  backgroundColor: withAlpha(colors.error, 0.14),
-                  paddingHorizontal: 8,
-                  paddingVertical: 2,
-                }}
-              >
-                <MaterialIcons name="history" size={12} color={colors.error} />
-                <Text style={{ fontSize: 10, fontWeight: '700', color: colors.error }}>Past</Text>
-              </View>
-            ) : null}
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
-            <Text style={{ fontSize: 11, color: colors.onSurfaceVariant }}>
-              {count} {count === 1 ? 'stop' : 'stops'}
-            </Text>
-            {budgetLabel ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                <MaterialIcons
-                  name="account-balance-wallet"
-                  size={12}
-                  color={overBudget ? colors.error : colors.onSurfaceVariant}
-                />
-                <Text style={{ fontSize: 11, fontWeight: '600', color: overBudget ? colors.error : colors.onSurfaceVariant }}>
-                  {budgetLabel}
-                </Text>
-              </View>
-            ) : null}
-          </View>
+          ) : null}
         </View>
-      </Pressable>
+        <Pressable onPress={onOpenDetails} hitSlop={6}>
+          <Text numberOfLines={1} style={[styles.pageMeta, { color: colors.onSurfaceVariant }]}>
+            {/* Today's plan puts its name here, since the title says the day. */}
+            {live ? `${title} · ` : ''}
+            {scopeLabel} · {dateLabel} · {count} {count === 1 ? 'stop' : 'stops'}
+          </Text>
+        </Pressable>
+      </View>
 
       {/* Sharing a trip nobody has been on yet would be a lie, so the chip only
           appears once at least one stop in the plan is marked visited. */}
       {canShare ? <HeaderChip icon="share" onPress={onShare} /> : null}
-      <HeaderChip icon="tune" onPress={onOpenDetails} />
-      <HeaderChip icon="map" onPress={onOpenMap} />
+    </View>
+  );
+}
+
+function firstStopDate(stops: TripStop[]): Date | null {
+  let first: Date | null = null;
+  for (const stop of stops) {
+    const date = new Date(
+      `${stop.date}T${String(stop.hour).padStart(2, '0')}:${String(stop.minute).padStart(2, '0')}:00`
+    );
+    if (!Number.isNaN(date.getTime()) && (!first || date < first)) first = date;
+  }
+  return first;
+}
+
+function travelTimeLabel(departureAt: string | null, stops: TripStop[]): string | null {
+  if (!departureAt) return null;
+  const departure = new Date(departureAt);
+  const arrival = firstStopDate(stops);
+  if (!arrival || Number.isNaN(departure.getTime())) return null;
+  const totalHours = Math.max(0, Math.round((arrival.getTime() - departure.getTime()) / 3_600_000));
+  if (totalHours === 0) return 'Arrives around the first stop time';
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  if (days === 0) return `${hours} hr${hours === 1 ? '' : 's'} to Bohol`;
+  return `${days} day${days === 1 ? '' : 's'}${hours ? ` ${hours} hr` : ''} to Bohol`;
+}
+
+function departureLabelShort(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Not set';
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+// Everything about the plan that isn't a stop, in one card: where it goes, when
+// it leaves, what it costs, what you wrote down.
+//
+// This was two stacked cards — a journey card and a budget/notes snapshot — each
+// a prominent surface, each with its own chevron, and both opening the very same
+// details screen. Two focal points next to each other is what made the page read
+// as crowded; there is one now.
+function TripOverviewCard({
+  group,
+  onOpenDetails,
+}: {
+  group: StopGroup;
+  onOpenDetails: () => void;
+}) {
+  const { colors } = useTheme();
+  const { getMeta } = usePlans();
+  const meta = getMeta(group.key);
+  const origin = meta.origin?.trim() || 'Add origin';
+  const destination = meta.destinationName?.trim() || 'Bohol';
+  const duration = travelTimeLabel(meta.departureAt, group.stops);
+  const notes = meta.notes?.trim() ?? '';
+
+  const spent = budgetSpent(meta);
+  const target = meta.targetBudget;
+  const hasTarget = target != null && target > 0;
+  const remaining = hasTarget ? target - spent : null;
+  const overBudget = remaining != null && remaining < 0;
+  const progress = hasTarget ? Math.min(1, spent / target) : 0;
+  const statusText = hasTarget
+    ? overBudget
+      ? `${pesoShort(Math.abs(remaining ?? 0))} over`
+      : remaining === 0
+        ? 'Fully used'
+        : `${pesoShort(remaining ?? 0)} left`
+    : 'Set budget';
+
+  return (
+    <View style={styles.overviewWrap}>
+      <Image source={CHIRPY_GUIDE} resizeMode="contain" style={styles.overviewMascot} />
+      <Pressable
+        onPress={onOpenDetails}
+        accessibilityRole="button"
+        accessibilityLabel="Open trip details, budget and notes"
+        style={({ pressed }) => [
+          styles.overview,
+          { backgroundColor: colors.primary, opacity: pressed ? 0.88 : 1 },
+        ]}
+      >
+        <View
+          pointerEvents="none"
+          style={[styles.overviewOrb, { backgroundColor: withAlpha(colors.secondary, 0.2) }]}
+        />
+
+        <View style={styles.overviewHeader}>
+          <Text style={[styles.overviewEyebrow, { color: withAlpha(colors.onPrimary, 0.68) }]}>
+            TRIP OVERVIEW
+          </Text>
+          <View style={[styles.overviewLink, { backgroundColor: withAlpha(colors.onPrimary, 0.12) }]}>
+            <Text style={[styles.overviewLinkText, { color: colors.onPrimary }]}>View details</Text>
+            <MaterialIcons name="arrow-forward" size={13} color={colors.onPrimary} />
+          </View>
+        </View>
+
+        <View style={styles.overviewRow}>
+          <View style={[styles.overviewIcon, { backgroundColor: withAlpha(colors.onPrimary, 0.12) }]}>
+            <MaterialIcons name="flight" size={18} color={colors.secondaryContainer} />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text numberOfLines={1} style={[styles.overviewValue, { color: colors.onPrimary }]}>
+              {origin} → {destination}
+            </Text>
+            <Text
+              numberOfLines={1}
+              style={[styles.overviewMeta, { color: withAlpha(colors.onPrimary, 0.72) }]}
+            >
+              {meta.departureAt
+                ? `Departs ${departureLabelShort(meta.departureAt)}`
+                : 'Add your departure'}
+              {duration ? ` · ${duration.replace('Bohol', destination)}` : ''}
+            </Text>
+          </View>
+        </View>
+
+        <View
+          style={[styles.overviewDivider, { backgroundColor: withAlpha(colors.onPrimary, 0.16) }]}
+        />
+
+        <View style={styles.overviewRow}>
+          <View style={[styles.overviewIcon, { backgroundColor: withAlpha(colors.onPrimary, 0.12) }]}>
+            <MaterialIcons name="savings" size={18} color={colors.secondaryContainer} />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text numberOfLines={1} style={[styles.overviewValue, { color: colors.onPrimary }]}>
+              {hasTarget || spent > 0 ? `${pesoShort(spent)} spent` : 'No budget yet'}
+              {hasTarget ? (
+                <Text style={[styles.overviewOf, { color: withAlpha(colors.onPrimary, 0.7) }]}>
+                  {'  of '}
+                  {pesoShort(target)}
+                </Text>
+              ) : null}
+            </Text>
+            {hasTarget ? (
+              <View
+                style={[styles.overviewTrack, { backgroundColor: withAlpha(colors.onPrimary, 0.18) }]}
+              >
+                <View
+                  style={[
+                    styles.overviewFill,
+                    {
+                      width: `${Math.round(progress * 100)}%`,
+                      backgroundColor: overBudget ? colors.errorContainer : colors.secondary,
+                    },
+                  ]}
+                />
+              </View>
+            ) : (
+              <Text
+                numberOfLines={1}
+                style={[styles.overviewMeta, { color: withAlpha(colors.onPrimary, 0.72) }]}
+              >
+                Set a target for this trip
+              </Text>
+            )}
+          </View>
+          <View
+            style={[
+              styles.overviewStatus,
+              {
+                backgroundColor: overBudget
+                  ? colors.errorContainer
+                  : withAlpha(colors.onPrimary, 0.13),
+              },
+            ]}
+          >
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.overviewStatusText,
+                { color: overBudget ? colors.onErrorContainer : colors.onPrimary },
+              ]}
+            >
+              {statusText}
+            </Text>
+          </View>
+        </View>
+
+        {/* Notes earn their row only when there are some. A permanently visible
+            empty slot inviting you to fill it is most of what a crowded page is
+            made of; the card still opens the screen where notes are written. */}
+        {notes ? (
+          <>
+            <View
+              style={[
+                styles.overviewDivider,
+                { backgroundColor: withAlpha(colors.onPrimary, 0.16) },
+              ]}
+            />
+            <View style={styles.overviewRow}>
+              <View
+                style={[styles.overviewIcon, { backgroundColor: withAlpha(colors.onPrimary, 0.12) }]}
+              >
+                <MaterialIcons name="sticky-note-2" size={18} color={colors.secondaryContainer} />
+              </View>
+              <Text
+                numberOfLines={2}
+                style={[styles.overviewNotes, { color: withAlpha(colors.onPrimary, 0.92) }]}
+              >
+                {notes}
+              </Text>
+            </View>
+          </>
+        ) : null}
+      </Pressable>
+    </View>
+  );
+}
+
+// The missing step between the page's chrome and the itinerary itself. It also
+// carries the reorder hint, which was a full-width banner of its own.
+function RouteHeading({ canReorder }: { canReorder: boolean }) {
+  const { colors } = useTheme();
+  return (
+    <View style={styles.routeHeading}>
+      <Text style={[styles.routeHeadingText, { color: colors.onBackground }]}>Route</Text>
+      {canReorder ? (
+        <View style={styles.reorderHint}>
+          <MaterialIcons name="drag-indicator" size={14} color={colors.onSurfaceVariant} />
+          <Text style={[styles.reorderHintText, { color: colors.onSurfaceVariant }]}>
+            Hold to reorder
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -652,59 +915,59 @@ function StopCard({
   stop,
   destination,
   archived,
-  canMoveUp,
-  canMoveDown,
-  onMoveUp,
-  onMoveDown,
+  drag,
+  isDragging,
   onEdit,
   onRemove,
   onToggleVisited,
+  onShare,
 }: {
   order: number;
   stop: TripStop;
   destination: Destination;
   archived?: boolean;
-  canMoveUp?: boolean;
-  canMoveDown?: boolean;
-  onMoveUp?: () => void;
-  onMoveDown?: () => void;
+  drag?: () => void;
+  isDragging?: boolean;
   onEdit: () => void;
   onRemove: () => void;
   onToggleVisited: () => void;
+  onShare: () => void;
 }) {
   const { colors } = useTheme();
   const visited = stop.visited;
   // Constant border width avoids a layout shift (and the gray shadow artifact it
   // exposed) when toggling visited; colour is solid, never a translucent tint.
-  const borderColor = visited ? VISITED_GREEN : 'transparent';
-  const showReorder = !archived && (canMoveUp || canMoveDown);
+  const borderColor = isDragging ? colors.primary : visited ? VISITED_GREEN : 'transparent';
   return (
     <View
       style={[
         styles.stopCard,
-        { backgroundColor: colors.surface, borderWidth: 1.5, borderColor },
+        {
+          backgroundColor: colors.surface,
+          borderWidth: 1.5,
+          borderColor,
+          elevation: isDragging ? 8 : 1,
+          shadowOpacity: isDragging ? 0.18 : 0.08,
+        },
       ]}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-        {showReorder ? (
-          <View style={{ marginRight: -2 }}>
-            <Pressable
-              onPress={onMoveUp}
-              disabled={!canMoveUp}
-              hitSlop={6}
-              style={{ opacity: canMoveUp ? 1 : 0.3 }}
-            >
-              <MaterialIcons name="keyboard-arrow-up" size={22} color={colors.onSurfaceVariant} />
-            </Pressable>
-            <Pressable
-              onPress={onMoveDown}
-              disabled={!canMoveDown}
-              hitSlop={6}
-              style={{ opacity: canMoveDown ? 1 : 0.3 }}
-            >
-              <MaterialIcons name="keyboard-arrow-down" size={22} color={colors.onSurfaceVariant} />
-            </Pressable>
-          </View>
+        {!archived && drag ? (
+          <Pressable
+            onLongPress={drag}
+            delayLongPress={130}
+            disabled={isDragging}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Drag to reorder stop"
+            accessibilityHint="Press and hold, then move this stop up or down"
+            style={[
+              styles.dragHandle,
+              { backgroundColor: withAlpha(colors.primary, isDragging ? 0.2 : 0.1) },
+            ]}
+          >
+            <MaterialIcons name="drag-indicator" size={22} color={colors.primary} />
+          </Pressable>
         ) : null}
         {/* The number is the visited toggle: tap it to tick the stop off, tap
             again to undo. It already shows the state, so a separate button for
@@ -725,7 +988,15 @@ function StopCard({
           )}
         </Pressable>
         <View style={{ flex: 1, gap: 4 }}>
-          <Text numberOfLines={2} style={{ fontSize: 16, fontWeight: '600', color: colors.onSurface }}>
+          <Text
+            numberOfLines={2}
+            style={{
+              fontSize: 16,
+              fontWeight: '600',
+              color: colors.onSurface,
+              textDecorationLine: visited ? 'line-through' : 'none',
+            }}
+          >
             {destination.name}
           </Text>
           {/* Visited sits with the place, not down among the date/time pills —
@@ -755,6 +1026,17 @@ function StopCard({
             ) : null}
           </View>
         </View>
+        {visited ? (
+          <Pressable
+            onPress={onShare}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={`Share visit to ${destination.name}`}
+            style={[styles.stopShareButton, { backgroundColor: withAlpha(colors.primary, 0.1) }]}
+          >
+            <MaterialIcons name="ios-share" size={17} color={colors.primary} />
+          </Pressable>
+        ) : null}
         <Pressable
           onPress={onEdit}
           hitSlop={8}
@@ -867,6 +1149,18 @@ function EmptyTripsState({ onAdd }: { onAdd: () => void }) {
 /* ---------------- Destination picker ---------------- */
 
 type PickerTabKey = 'NEAR' | 'POPULAR' | 'ALL';
+type NewTripDetails = {
+  title: string;
+  origin: string | null;
+  departureAt: string | null;
+  destinationName: string;
+};
+
+function localDateTimeValue(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 const PICKER_TABS: { key: PickerTabKey; label: string; icon: keyof typeof MaterialIcons.glyphMap }[] = [
   { key: 'NEAR', label: 'Near you', icon: 'near-me' },
   { key: 'POPULAR', label: 'Popular', icon: 'local-fire-department' },
@@ -880,7 +1174,13 @@ function DestinationPicker({
 }: {
   existingIds: Set<number>;
   onDismiss: () => void;
-  onConfirm: (ids: number[], scope: PlanScope, range: PlanRange, baseDate: string) => void;
+  onConfirm: (
+    ids: number[],
+    scope: PlanScope,
+    range: PlanRange,
+    baseDate: string,
+    details: NewTripDetails
+  ) => void;
 }) {
   const { colors } = useTheme();
   const { location } = useUserLocation();
@@ -893,6 +1193,17 @@ function DestinationPicker({
   const [hits, setHits] = useState<PlaceHit[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchErr, setSearchErr] = useState<string | null>(null);
+  const [tripName, setTripName] = useState('');
+  const [origin, setOrigin] = useState('');
+  const [departureAt, setDepartureAt] = useState<string | null>(null);
+  const [departurePicker, setDeparturePicker] = useState<'date' | 'time' | null>(null);
+  const [showManual, setShowManual] = useState(false);
+  const [manualName, setManualName] = useState('');
+  const [manualArea, setManualArea] = useState('');
+  const [manualCategory, setManualCategory] = useState('Place');
+  const [manualLatitude, setManualLatitude] = useState('');
+  const [manualLongitude, setManualLongitude] = useState('');
+  const [manualDestinationName, setManualDestinationName] = useState<string | null>(null);
   const seq = useRef(0);
 
   const range = draftRange(draft);
@@ -977,6 +1288,41 @@ function DestinationPicker({
     }
   };
 
+  const addManualPlace = async () => {
+    const latitude = Number(manualLatitude.trim());
+    const longitude = Number(manualLongitude.trim());
+    if (!manualName.trim() || !manualArea.trim()) {
+      showToast('Add the place name and city or area');
+      return;
+    }
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      showToast('Enter valid latitude and longitude coordinates');
+      return;
+    }
+    try {
+      const place = await addPlace(
+        {
+          name: manualName.trim(),
+          municipality: manualArea.trim(),
+          category: manualCategory.trim() || 'Place',
+          latitude,
+          longitude,
+        },
+        { ...region, name: manualArea.trim() }
+      );
+      setSelected((prev) => (prev.includes(place.id) ? prev : [...prev, place.id]));
+      setManualDestinationName(manualArea.trim());
+      setShowManual(false);
+      setManualName('');
+      setManualArea('');
+      setManualLatitude('');
+      setManualLongitude('');
+      showToast(`${place.name} added to this trip`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Couldn't add that place");
+    }
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {/* Top bar */}
@@ -1002,6 +1348,89 @@ function DestinationPicker({
         <PlanDraftFields draft={draft} onChange={setDraft} />
       </View>
 
+      <View style={{ paddingHorizontal: 20, paddingBottom: 10 }}>
+        <View
+          style={[
+            styles.tripSetupCard,
+            {
+              backgroundColor: colors.surface,
+              borderColor: withAlpha(colors.outlineVariant, 0.45),
+            },
+          ]}
+        >
+          <View style={styles.tripSetupTitleRow}>
+            <View style={[styles.tripSetupIcon, { backgroundColor: withAlpha(colors.primary, 0.1) }]}>
+              <MaterialIcons name="flight-takeoff" size={17} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.tripSetupTitle, { color: colors.onSurface }]}>Journey details</Text>
+              <Text style={[styles.tripSetupHint, { color: colors.onSurfaceVariant }]}>Optional — you can edit these later</Text>
+            </View>
+          </View>
+          <View style={styles.tripSetupInputs}>
+            <TextInput
+              value={tripName}
+              onChangeText={setTripName}
+              placeholder={`${region.name} Trip`}
+              placeholderTextColor={colors.onSurfaceVariant}
+              autoCapitalize="words"
+              style={[styles.tripSetupInput, { color: colors.onSurface, backgroundColor: withAlpha(colors.surfaceVariant, 0.5) }]}
+            />
+            <TextInput
+              value={origin}
+              onChangeText={setOrigin}
+              placeholder="Coming from (e.g. America)"
+              placeholderTextColor={colors.onSurfaceVariant}
+              autoCapitalize="words"
+              style={[styles.tripSetupInput, { color: colors.onSurface, backgroundColor: withAlpha(colors.surfaceVariant, 0.5) }]}
+            />
+          </View>
+          <Pressable
+            onPress={() => setDeparturePicker('date')}
+            style={[styles.departureSetupButton, { backgroundColor: withAlpha(colors.primary, 0.09) }]}
+          >
+            <MaterialIcons name="schedule" size={16} color={colors.primary} />
+            <Text numberOfLines={1} style={{ flex: 1, color: departureAt ? colors.onSurface : colors.onSurfaceVariant, fontSize: 12, fontWeight: '600' }}>
+              {departureAt ? departureLabelShort(departureAt) : 'Set plane departure'}
+            </Text>
+            {departureAt ? (
+              <Pressable
+                onPress={() => setDepartureAt(null)}
+                hitSlop={6}
+                style={{ padding: 2 }}
+              >
+                <MaterialIcons name="close" size={16} color={colors.onSurfaceVariant} />
+              </Pressable>
+            ) : (
+              <MaterialIcons name="chevron-right" size={18} color={colors.primary} />
+            )}
+          </Pressable>
+          {departurePicker ? (
+            <DateTimePicker
+              value={departureAt ? new Date(departureAt) : new Date(`${draft.baseDate}T08:00:00`)}
+              mode={departurePicker}
+              onChange={(_, selectedDate) => {
+                if (!selectedDate) {
+                  setDeparturePicker(null);
+                  return;
+                }
+                const current = departureAt ? new Date(departureAt) : new Date(`${draft.baseDate}T08:00:00`);
+                const next = new Date(current);
+                if (departurePicker === 'date') {
+                  next.setFullYear(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+                  setDepartureAt(localDateTimeValue(next));
+                  setDeparturePicker('time');
+                } else {
+                  next.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
+                  setDepartureAt(localDateTimeValue(next));
+                  setDeparturePicker(null);
+                }
+              }}
+            />
+          ) : null}
+        </View>
+      </View>
+
       {/* Search */}
       <View style={{ paddingHorizontal: 20 }}>
         <View style={[styles.search, { backgroundColor: colors.surface, borderColor: colors.outlineVariant }]}>
@@ -1016,6 +1445,78 @@ function DestinationPicker({
           />
           {searching ? <ActivityIndicator size="small" color={colors.primary} /> : null}
         </View>
+      </View>
+
+      <View style={{ paddingHorizontal: 20, marginTop: 8 }}>
+        <Pressable
+          onPress={() => setShowManual((value) => !value)}
+          style={[
+            styles.experimentalButton,
+            {
+              backgroundColor: withAlpha(colors.secondary, 0.09),
+              borderColor: withAlpha(colors.secondary, 0.3),
+            },
+          ]}
+        >
+          <MaterialIcons name="add-location-alt" size={18} color={colors.secondary} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.experimentalTitle, { color: colors.onSurface }]}>Add a place yourself</Text>
+            <Text style={[styles.experimentalHint, { color: colors.onSurfaceVariant }]}>Experimental · useful for travel outside Bohol</Text>
+          </View>
+          <MaterialIcons name={showManual ? 'expand-less' : 'expand-more'} size={20} color={colors.secondary} />
+        </Pressable>
+        {showManual ? (
+          <View style={[styles.manualForm, { backgroundColor: colors.surface, borderColor: withAlpha(colors.outlineVariant, 0.45) }]}>
+            <TextInput
+              value={manualName}
+              onChangeText={setManualName}
+              placeholder="Place name"
+              placeholderTextColor={colors.onSurfaceVariant}
+              style={[styles.manualInput, { color: colors.onSurface, backgroundColor: withAlpha(colors.surfaceVariant, 0.5) }]}
+            />
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TextInput
+                value={manualArea}
+                onChangeText={setManualArea}
+                placeholder="City / country"
+                placeholderTextColor={colors.onSurfaceVariant}
+                style={[styles.manualInput, { flex: 1, color: colors.onSurface, backgroundColor: withAlpha(colors.surfaceVariant, 0.5) }]}
+              />
+              <TextInput
+                value={manualCategory}
+                onChangeText={setManualCategory}
+                placeholder="Category"
+                placeholderTextColor={colors.onSurfaceVariant}
+                style={[styles.manualInput, { flex: 1, color: colors.onSurface, backgroundColor: withAlpha(colors.surfaceVariant, 0.5) }]}
+              />
+            </View>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TextInput
+                value={manualLatitude}
+                onChangeText={setManualLatitude}
+                keyboardType="numbers-and-punctuation"
+                placeholder="Latitude"
+                placeholderTextColor={colors.onSurfaceVariant}
+                style={[styles.manualInput, { flex: 1, color: colors.onSurface, backgroundColor: withAlpha(colors.surfaceVariant, 0.5) }]}
+              />
+              <TextInput
+                value={manualLongitude}
+                onChangeText={setManualLongitude}
+                keyboardType="numbers-and-punctuation"
+                placeholder="Longitude"
+                placeholderTextColor={colors.onSurfaceVariant}
+                style={[styles.manualInput, { flex: 1, color: colors.onSurface, backgroundColor: withAlpha(colors.surfaceVariant, 0.5) }]}
+              />
+            </View>
+            <Text style={{ fontSize: 10, lineHeight: 14, color: colors.onSurfaceVariant }}>
+              Coordinates keep your custom place accurate on the route map.
+            </Text>
+            <Pressable onPress={addManualPlace} style={[styles.manualAddButton, { backgroundColor: colors.secondary }]}>
+              <MaterialIcons name="add" size={16} color={colors.onSecondary} />
+              <Text style={{ color: colors.onSecondary, fontSize: 12, fontWeight: '800' }}>Add custom place</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
 
       {/* Tabs */}
@@ -1067,6 +1568,7 @@ function DestinationPicker({
 
       {/* List */}
       <ScrollView
+        style={{ flex: 1 }}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ paddingHorizontal: 20, paddingVertical: 8, gap: 10 }}
       >
@@ -1139,7 +1641,13 @@ function DestinationPicker({
         <Pressable
           disabled={selected.length === 0}
           onPress={() =>
-            selected.length > 0 && onConfirm(selected, draft.scope, range, draft.baseDate)
+            selected.length > 0 &&
+            onConfirm(selected, draft.scope, range, draft.baseDate, {
+              title: tripName.trim() || `${region.name} Trip`,
+              origin: origin.trim() || null,
+              departureAt,
+              destinationName: manualDestinationName || region.name,
+            })
           }
           style={{
             height: 52,
@@ -1490,36 +1998,228 @@ function PickerField({
 }
 
 const styles = StyleSheet.create({
-  // A right-aligned column of pill FABs, each only as wide as its own label.
-  fabStack: {
+  // Transparent positioning frame; the bar inside it carries the surface.
+  fabDock: {
     position: 'absolute',
-    right: 20,
-    bottom: 24,
-    alignItems: 'flex-end',
-    gap: 10,
+    left: 0,
+    right: 0,
+    bottom: 16,
+    alignItems: 'center',
   },
-  fab: {
+  // With no plan on the page there is no Start button and Chirpy peeks up from
+  // the bottom-right, so the dock takes the strip beside him and centres its
+  // buttons in it rather than staying pinned to the middle of the screen.
+  fabDockCompact: {
+    right: CHIRPY_PEEK_LANE,
+  },
+  // Solid surface so the actions stay legible over whatever has scrolled
+  // underneath them.
+  fabDockBar: {
+    height: 56,
+    borderRadius: 20,
+    padding: 5,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    height: 48,
-    paddingHorizontal: 18,
-    borderRadius: 24,
-    elevation: 4,
+    gap: 3,
+    elevation: 6,
     shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  dockAction: {
+    width: 42,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  dockActionIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  startFab: {
+    // Sized to its label rather than flex:1 — the bar now hugs however many
+    // actions the current plan calls for.
+    paddingHorizontal: 14,
+    height: 46,
+    borderRadius: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  pageHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 16,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pageTitle: {
+    flexShrink: 1,
+    fontSize: 30,
+    fontWeight: '700',
+    letterSpacing: -0.5,
+  },
+  pageMeta: {
+    marginTop: 3,
+    fontSize: 12,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderRadius: 50,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  overviewWrap: {
+    position: 'relative',
+    // Room above for the mascot to lean over the card's top edge.
+    marginTop: 34,
+    marginBottom: 14,
+  },
+  overviewMascot: {
+    position: 'absolute',
+    zIndex: 0,
+    top: -56,
+    right: 14,
+    width: 86,
+    height: 86,
+    transform: [{ rotate: '-3deg' }],
+  },
+  overview: {
+    position: 'relative',
+    zIndex: 1,
+    overflow: 'hidden',
+    borderRadius: 20,
+    padding: 14,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOpacity: 0.045,
+    shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
   },
-  // The primary action sits a little taller and heavier than the two above it.
-  startFab: {
-    height: 56,
-    borderRadius: 28,
-    elevation: 6,
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
+  overviewOrb: {
+    position: 'absolute',
+    width: 132,
+    height: 132,
+    borderRadius: 66,
+    right: -43,
+    top: -58,
+  },
+  overviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  overviewEyebrow: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+  },
+  overviewLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderRadius: 99,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  overviewLinkText: {
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  overviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  overviewIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  overviewValue: {
+    fontSize: 13.5,
+    fontWeight: '800',
+  },
+  overviewOf: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  overviewMeta: {
+    marginTop: 3,
+    fontSize: 10.5,
+    fontWeight: '500',
+  },
+  overviewDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginVertical: 12,
+  },
+  overviewTrack: {
+    height: 5,
+    overflow: 'hidden',
+    borderRadius: 99,
+    marginTop: 7,
+  },
+  overviewFill: {
+    height: '100%',
+    borderRadius: 99,
+  },
+  overviewStatus: {
+    maxWidth: 88,
+    borderRadius: 99,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
+  overviewStatusText: {
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  overviewNotes: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 11.5,
+    lineHeight: 16,
+    fontWeight: '500',
+  },
+  routeHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+    marginBottom: 10,
+  },
+  routeHeadingText: {
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: -0.2,
+  },
+  reorderHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  reorderHintText: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   stopCard: {
     borderRadius: 20,
@@ -1537,6 +2237,68 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  dragHandle: {
+    width: 34,
+    height: 42,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: -3,
+  },
+  stopShareButton: {
+    width: 31,
+    height: 31,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tripSetupCard: {
+    borderWidth: 1,
+    borderRadius: 17,
+    padding: 11,
+  },
+  tripSetupTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  tripSetupIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tripSetupTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  tripSetupHint: {
+    marginTop: 1,
+    fontSize: 9,
+  },
+  tripSetupInputs: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 9,
+  },
+  tripSetupInput: {
+    flex: 1,
+    height: 39,
+    borderRadius: 11,
+    paddingHorizontal: 10,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  departureSetupButton: {
+    height: 38,
+    marginTop: 8,
+    borderRadius: 11,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
   search: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1545,6 +2307,45 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     paddingHorizontal: 14,
     height: 52,
+  },
+  experimentalButton: {
+    minHeight: 48,
+    borderWidth: 1,
+    borderRadius: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  experimentalTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  experimentalHint: {
+    marginTop: 1,
+    fontSize: 9,
+  },
+  manualForm: {
+    gap: 8,
+    marginTop: 7,
+    padding: 11,
+    borderWidth: 1,
+    borderRadius: 15,
+  },
+  manualInput: {
+    height: 40,
+    borderRadius: 11,
+    paddingHorizontal: 10,
+    fontSize: 12,
+  },
+  manualAddButton: {
+    height: 40,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
   },
   dialogScrim: {
     flex: 1,

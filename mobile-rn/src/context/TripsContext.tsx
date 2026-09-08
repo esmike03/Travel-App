@@ -17,8 +17,11 @@ import {
   setTripStopVisited,
   persistPositions,
   TripStopRow,
+  VisitHistoryRow,
+  loadVisitHistory,
+  recordVisit,
 } from '../data/db';
-import { PlanScope, PlanRange, defaultRange, todayIso } from '../utils/planDates';
+import { PlanScope, PlanRange, defaultRange, planKeyOf, todayIso } from '../utils/planDates';
 
 // Date helpers live in utils/planDates; re-exported here so the many existing
 // `from '../context/TripsContext'` import sites keep working.
@@ -42,8 +45,15 @@ export interface TripStop {
   planEnd: string;
 }
 
+export type VisitHistory = VisitHistoryRow;
+
 interface TripsContextValue {
   stops: TripStop[];
+  /** Permanent on-device visits, kept even if their original stop is removed. */
+  visitHistory: VisitHistory[];
+  /** True until the first SQLite read finishes, so screens can hold off on
+   *  showing an empty state that is about to be replaced by real stops. */
+  loading: boolean;
   add: (
     destinationId: number,
     scope: PlanScope,
@@ -83,8 +93,21 @@ function toRow(s: TripStop): TripStopRow {
   };
 }
 
+function historyFromStop(stop: TripStop, visitedAt = Date.now()): VisitHistory {
+  const planKey = planKeyOf(stop.scope, { start: stop.planStart, end: stop.planEnd });
+  return {
+    visitKey: `${planKey}|${stop.id}|${stop.destinationId}`,
+    destinationId: stop.destinationId,
+    visitedAt,
+    visitDate: stop.date,
+    planKey,
+  };
+}
+
 export function TripsProvider({ children }: { children: React.ReactNode }) {
   const [stops, setStops] = useState<TripStop[]>([]);
+  const [visitHistory, setVisitHistory] = useState<VisitHistory[]>([]);
+  const [loading, setLoading] = useState(true);
   const nextId = useRef(1);
 
   // Hydrate from SQLite on mount.
@@ -92,7 +115,7 @@ export function TripsProvider({ children }: { children: React.ReactNode }) {
     let active = true;
     (async () => {
       try {
-        const rows = await loadTripStops();
+        const [rows, storedHistory] = await Promise.all([loadTripStops(), loadVisitHistory()]);
         if (!active) return;
         const loaded: TripStop[] = rows.map((r) => {
           const scope = (r.scope as PlanScope) ?? 'day';
@@ -114,9 +137,27 @@ export function TripsProvider({ children }: { children: React.ReactNode }) {
           };
         });
         setStops(loaded);
+        // Older versions only stored `visited` on the stop. Backfill those
+        // check-ins once so existing users immediately get an explored list.
+        const known = new Set(storedHistory.map((visit) => visit.visitKey));
+        const backfilled = loaded
+          .filter((stop) => stop.visited)
+          .map((stop) => {
+            const scheduled = new Date(
+              `${stop.date}T${String(stop.hour).padStart(2, '0')}:${String(stop.minute).padStart(2, '0')}:00`
+            ).getTime();
+            return historyFromStop(stop, Number.isFinite(scheduled) ? scheduled : Date.now());
+          })
+          .filter((visit) => !known.has(visit.visitKey));
+        backfilled.forEach((visit) => recordVisit(visit).catch(() => {}));
+        setVisitHistory(
+          [...storedHistory, ...backfilled].sort((a, b) => b.visitedAt - a.visitedAt)
+        );
         nextId.current = loaded.reduce((max, s) => Math.max(max, s.id), 0) + 1;
       } catch {
         // DB unavailable — continue in-memory only.
+      } finally {
+        if (active) setLoading(false);
       }
     })();
     return () => {
@@ -199,9 +240,19 @@ export function TripsProvider({ children }: { children: React.ReactNode }) {
   );
 
   const setVisited = useCallback((id: number, visited: boolean) => {
+    if (visited) {
+      const stop = stops.find((candidate) => candidate.id === id);
+      if (stop) {
+        const entry = historyFromStop(stop);
+        setVisitHistory((prev) =>
+          prev.some((visit) => visit.visitKey === entry.visitKey) ? prev : [entry, ...prev]
+        );
+        recordVisit(entry).catch(() => {});
+      }
+    }
     setStops((prev) => prev.map((s) => (s.id === id ? { ...s, visited } : s)));
     setTripStopVisited(id, visited).catch(() => {});
-  }, []);
+  }, [stops]);
 
   // Apply a new manual order: `idsInOrder` lists every reordered id in its new
   // sequence. Positions are rewritten to match and persisted so drag order sticks
@@ -232,6 +283,8 @@ export function TripsProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<TripsContextValue>(
     () => ({
       stops,
+      visitHistory,
+      loading,
       add,
       update,
       remove,
@@ -242,7 +295,7 @@ export function TripsProvider({ children }: { children: React.ReactNode }) {
       toggleTrip,
       setVisited,
     }),
-    [stops, add, update, remove, move, reorder, toggleTrip, setVisited]
+    [stops, visitHistory, loading, add, update, remove, move, reorder, toggleTrip, setVisited]
   );
 
   return <TripsContext.Provider value={value}>{children}</TripsContext.Provider>;
@@ -253,4 +306,3 @@ export function useTrips(): TripsContextValue {
   if (!ctx) throw new Error('useTrips must be used within TripsProvider');
   return ctx;
 }
-

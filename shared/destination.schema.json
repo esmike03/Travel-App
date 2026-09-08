@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TravsDestination",
+  "type": "object",
+  "required": ["id", "name", "slug", "latitude", "longitude", "updated_at"],
+  "properties": {
+    "id": { "type": "integer" },
+    "name": { "type": "string" },
+    "slug": { "type": "string" },
+    "description": { "type": ["string", "null"] },
+    "category_id": { "type": ["integer", "null"] },
+    "municipality_id": { "type": ["integer", "null"] },
+    "address": { "type": ["string", "null"] },
+    "latitude": { "type": "number" },
+    "longitude": { "type": "number" },
+    "entrance_fee": { "type": ["string", "null"] },
+    "opening_hours": { "type": ["string", "null"] },
+    "contact": { "type": ["string", "null"] },
+    "best_time_to_visit": { "type": ["string", "null"] },
+    "amenities": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "average_rating": { "type": "number" },
+    "review_count": { "type": "integer" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

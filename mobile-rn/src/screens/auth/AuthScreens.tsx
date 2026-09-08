@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardTypeOptions,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,31 +13,25 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
-import { ColorScheme } from '../../theme/colors';
+import { withAlpha } from '../../theme/colors';
 import { useAuth } from '../../context/AuthContext';
+
+const CHIRPY_MASCOT = require('../../../assets/branding/chirpy-guide.png');
 
 function BrandHeader() {
   const { colors } = useTheme();
   return (
     <View style={{ alignItems: 'center' }}>
-      <View
-        style={{
-          width: 72,
-          height: 72,
-          borderRadius: 36,
-          backgroundColor: colors.primaryContainer,
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <MaterialIcons name="explore" size={36} color={colors.onPrimaryContainer} />
-      </View>
-      <View style={{ height: 12 }} />
-      <Text style={{ fontSize: 24, fontWeight: '700', color: colors.onBackground }}>
-        Travs
+      <Image
+        source={CHIRPY_MASCOT}
+        resizeMode="contain"
+        style={{ width: 144, height: 144 }}
+      />
+      <Text style={{ fontSize: 31, fontWeight: '900', letterSpacing: -1, color: colors.onBackground }}>
+        Chirpy
       </Text>
-      <Text style={{ fontSize: 12, color: colors.onSurfaceVariant }}>
-        Bohol Travel Companion
+      <Text style={{ fontSize: 12, fontWeight: '600', letterSpacing: 0.4, color: colors.onSurfaceVariant }}>
+        Your Travel Companion
       </Text>
     </View>
   );
@@ -59,12 +54,25 @@ function AuthTextField(props: {
       style={[
         styles.field,
         {
-          borderColor: focused ? colors.primary : colors.outlineVariant,
-          backgroundColor: colors.surface,
+          borderColor: focused ? colors.primary : withAlpha(colors.outline, 0.55),
+          backgroundColor: focused
+            ? withAlpha(colors.primaryContainer, 0.48)
+            : withAlpha(colors.surfaceVariant, 0.58),
         },
       ]}
     >
-      <MaterialIcons name={props.icon} size={20} color={colors.onSurfaceVariant} />
+      <View
+        style={[
+          styles.fieldIcon,
+          { backgroundColor: withAlpha(colors.primary, focused ? 0.16 : 0.1) },
+        ]}
+      >
+        <MaterialIcons
+          name={props.icon}
+          size={18}
+          color={focused ? colors.primary : colors.onSurfaceVariant}
+        />
+      </View>
       <TextInput
         style={[styles.input, { color: colors.onSurface }]}
         value={props.value}
@@ -120,21 +128,24 @@ function PrimaryCta({
     <Pressable
       onPress={onPress}
       disabled={loading}
-      style={{
-        backgroundColor: colors.primary,
-        height: 52,
-        borderRadius: 14,
-        alignItems: 'center',
-        justifyContent: 'center',
-        opacity: loading ? 0.7 : 1,
-      }}
+      style={[
+        styles.primaryCta,
+        {
+          backgroundColor: colors.primary,
+          opacity: loading ? 0.7 : 1,
+          shadowColor: colors.primary,
+        },
+      ]}
     >
       {loading ? (
         <ActivityIndicator color={colors.onPrimary} />
       ) : (
-        <Text style={{ color: colors.onPrimary, fontSize: 16, fontWeight: '600' }}>
-          {label}
-        </Text>
+        <>
+          <Text style={{ color: colors.onPrimary, fontSize: 15, fontWeight: '800' }}>
+            {label}
+          </Text>
+          <MaterialIcons name="arrow-forward" size={18} color={colors.onPrimary} />
+        </>
       )}
     </Pressable>
   );
@@ -173,22 +184,52 @@ function AuthScaffold({
 }) {
   const { colors } = useTheme();
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={styles.scaffold}
-      keyboardShouldPersistTaps="handled"
-    >
-      <View style={{ height: 64 }} />
-      <BrandHeader />
-      <View style={{ height: 28 }} />
-      <Text style={[styles.title, { color: colors.onBackground }]}>{title}</Text>
-      <Text style={[styles.subtitle, { color: colors.onSurfaceVariant }]}>
-        {subtitle}
-      </Text>
-      <View style={{ height: 16 }} />
-      <View style={{ width: '100%', gap: 12 }}>{children}</View>
-      <View style={{ height: 32 }} />
-    </ScrollView>
+    <View style={[styles.authRoot, { backgroundColor: colors.background }]}>
+      <View
+        pointerEvents="none"
+        style={[styles.primaryBackdrop, { backgroundColor: withAlpha(colors.primary, 0.11) }]}
+      />
+      <View
+        pointerEvents="none"
+        style={[styles.sunBackdrop, { backgroundColor: withAlpha(colors.secondary, 0.2) }]}
+      />
+      <View
+        pointerEvents="none"
+        style={[styles.bottomBackdrop, { backgroundColor: withAlpha(colors.primary, 0.07) }]}
+      />
+      <View pointerEvents="none" style={styles.sparkleOne}>
+        <MaterialIcons name="auto-awesome" size={22} color={withAlpha(colors.secondary, 0.7)} />
+      </View>
+      <View pointerEvents="none" style={styles.sparkleTwo}>
+        <MaterialIcons name="flight" size={20} color={withAlpha(colors.primary, 0.35)} />
+      </View>
+
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.scaffold}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <BrandHeader />
+        <View
+          style={[
+            styles.formCard,
+            {
+              backgroundColor: withAlpha(colors.surface, 0.97),
+              borderColor: withAlpha(colors.outline, 0.36),
+            },
+          ]}
+        >
+          <View style={[styles.formAccent, { backgroundColor: colors.secondary }]} />
+          <Text style={[styles.title, { color: colors.onBackground }]}>{title}</Text>
+          <Text style={[styles.subtitle, { color: colors.onSurfaceVariant }]}>{subtitle}</Text>
+          <View style={styles.formFields}>{children}</View>
+        </View>
+        <Text style={[styles.footerNote, { color: colors.onSurfaceVariant }]}> 
+          Plan thoughtfully. Travel lightly. Remember everything.
+        </Text>
+      </ScrollView>
+    </View>
   );
 }
 
@@ -218,7 +259,7 @@ export function LoginScreen({ onNavigateToRegister }: { onNavigateToRegister: ()
   const [showPassword, setShowPassword] = useState(false);
 
   return (
-    <AuthScaffold title="Welcome back" subtitle="Sign in to continue exploring Bohol.">
+    <AuthScaffold title="Welcome back" subtitle="Your next little adventure is waiting.">
       <AuthTextField
         value={email}
         onChangeText={(t) => {
@@ -256,7 +297,7 @@ export function LoginScreen({ onNavigateToRegister }: { onNavigateToRegister: ()
       />
       <View style={{ alignItems: 'center' }}>
         <AuthFooter
-          prompt="New to Travs? "
+          prompt="New to Chirpy? "
           action="Create account"
           enabled={!formState.loading}
           onPress={onNavigateToRegister}
@@ -355,32 +396,114 @@ export function RegisterScreen({ onNavigateToLogin }: { onNavigateToLogin: () =>
 }
 
 const styles = StyleSheet.create({
+  authRoot: {
+    flex: 1,
+    overflow: 'hidden',
+  },
+  primaryBackdrop: {
+    position: 'absolute',
+    width: 330,
+    height: 330,
+    borderRadius: 165,
+    right: -150,
+    top: -150,
+  },
+  sunBackdrop: {
+    position: 'absolute',
+    width: 190,
+    height: 190,
+    borderRadius: 95,
+    left: -115,
+    top: 215,
+  },
+  bottomBackdrop: {
+    position: 'absolute',
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    right: -170,
+    bottom: -125,
+  },
+  sparkleOne: { position: 'absolute', top: 86, left: 34 },
+  sparkleTwo: { position: 'absolute', top: 214, right: 30, transform: [{ rotate: '18deg' }] },
   scaffold: {
-    paddingHorizontal: 24,
+    paddingTop: 38,
+    paddingHorizontal: 20,
+    paddingBottom: 34,
     alignItems: 'center',
     flexGrow: 1,
   },
+  formCard: {
+    width: '100%',
+    marginTop: 20,
+    padding: 20,
+    borderRadius: 28,
+    borderWidth: 1,
+    shadowColor: '#082521',
+    shadowOpacity: 0.1,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
+  },
+  formAccent: {
+    width: 34,
+    height: 5,
+    borderRadius: 3,
+    marginBottom: 13,
+  },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
-    textAlign: 'center',
+    fontSize: 25,
+    lineHeight: 30,
+    fontWeight: '900',
+    letterSpacing: -0.6,
   },
   subtitle: {
-    fontSize: 14,
-    textAlign: 'center',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 3,
   },
+  formFields: { width: '100%', gap: 12, marginTop: 18 },
   field: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    height: 56,
+    borderRadius: 18,
+    paddingLeft: 9,
+    paddingRight: 14,
+    height: 58,
+  },
+  fieldIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   input: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 15,
     height: '100%',
+  },
+  primaryCta: {
+    height: 54,
+    borderRadius: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 4,
+  },
+  footerNote: {
+    maxWidth: 280,
+    marginTop: 18,
+    fontSize: 10,
+    lineHeight: 15,
+    fontWeight: '700',
+    textAlign: 'center',
+    letterSpacing: 0.3,
   },
 });

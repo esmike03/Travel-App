@@ -31,11 +31,32 @@ export default function RegionSetting() {
     <View style={[styles.card, { backgroundColor: colors.surface }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 16, fontWeight: '600', color: colors.onSurface }}>
-            Travel outside Bohol
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+            <Text style={{ fontSize: 16, fontWeight: '600', color: colors.onSurface }}>
+              Travel outside Bohol
+            </Text>
+            <View
+              style={{
+                paddingHorizontal: 7,
+                paddingVertical: 2,
+                borderRadius: 6,
+                backgroundColor: colors.secondaryContainer,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 9,
+                  fontWeight: '800',
+                  letterSpacing: 0.5,
+                  color: colors.onSecondaryContainer,
+                }}
+              >
+                EXPERIMENTAL
+              </Text>
+            </View>
+          </View>
           <Text style={{ fontSize: 12, color: colors.onSurfaceVariant }}>
-            Off keeps Travs on Bohol. On points the map, weather and your plans at another
+          Off keeps Chirpy on Bohol. On points the map, weather and your plans at another
             province.
           </Text>
         </View>
@@ -88,8 +109,9 @@ export default function RegionSetting() {
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 10 }}>
           <MaterialIcons name="info-outline" size={14} color={colors.onSurfaceVariant} />
           <Text style={{ flex: 1, fontSize: 11, color: colors.onSurfaceVariant }}>
-            Travs only has curated spots for Bohol. In {region.name} you can search for places
-            to add as stops, and weather and maps work as normal.
+            Travelling outside Bohol is experimental. Chirpy only has curated spots for Bohol —
+            in {region.name} you can search for places to add as stops, and weather and maps work
+            as normal.
           </Text>
         </View>
       ) : null}
@@ -252,8 +274,15 @@ function RegionPicker({
 
 const styles = StyleSheet.create({
   card: { borderRadius: 20, padding: 16, gap: 4 },
-  scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  // Full-bleed scrim, so the sheet's rounded top corners sit on dimmed backdrop
+  // rather than cutting through to the page underneath. See PlanListSheet.
+  scrim: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.4)' },
   sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: '100%',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 20,

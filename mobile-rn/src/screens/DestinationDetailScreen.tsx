@@ -1,5 +1,5 @@
 // Ported from DestinationDetailScreen in ui/screens/Screens.kt.
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Image,
   Pressable,
@@ -17,7 +17,9 @@ import {
   destinationById,
   destinations,
   distanceKm,
+  isCustomPlace,
 } from '../data/destinations';
+import { fetchPlacePhoto, PlacePhoto } from '../data/photos';
 import { useFavorites } from '../context/FavoritesContext';
 import { useUserLocation } from '../hooks/useUserLocation';
 import {
@@ -31,6 +33,7 @@ import {
   openDirections,
   openMap,
   openSource,
+  DestinationPhoto,
 } from '../components/common';
 import { showToast } from '../utils/toast';
 import { WeatherCard } from '../components/Weather';
@@ -103,17 +106,45 @@ export default function DestinationDetailScreen({
 
   const destination = destinationById(destinationId) ?? destinations[0];
   const saved = isFavorite(destination.id);
+  // A place the traveller searched off the map: no curated photo, rating,
+  // write-up or reviews. The screen shows what's real and hides the rest rather
+  // than faking any of it.
+  const curated = !isCustomPlace(destination.id);
+
+  // Custom places have no curated photo; try Wikimedia Commons for one nearby.
+  // Comes with a credit that must be shown (CC licensing) — see the hero.
+  const [photo, setPhoto] = useState<PlacePhoto | null>(null);
+  useEffect(() => {
+    if (curated) return;
+    let active = true;
+    setPhoto(null);
+    fetchPlacePhoto(destination.latitude, destination.longitude).then((p) => {
+      if (active) setPhoto(p);
+    });
+    return () => {
+      active = false;
+    };
+  }, [destination.id, destination.latitude, destination.longitude, curated]);
+
+  // The hero image: curated photo, else a fetched Commons photo, else nothing.
+  const heroUri = destination.imageUrl || photo?.url || null;
 
   const nearby = useMemo(() => {
+    // Only curated Bohol spots can be "nearby"; for a custom place elsewhere
+    // there is nothing honest to suggest.
+    if (!curated) return [] as Destination[];
     const sameMunicipality = destinations
       .filter((d) => d.id !== destination.id && d.municipality === destination.municipality)
       .slice(0, 5);
     return sameMunicipality.length > 0
       ? sameMunicipality
       : destinations.filter((d) => d.id !== destination.id).slice(0, 5);
-  }, [destination.id]);
+  }, [destination.id, curated]);
 
-  const reviews = useMemo(() => sampleReviewsFor(destination), [destination.id]);
+  const reviews = useMemo(
+    () => (curated ? sampleReviewsFor(destination) : []),
+    [destination.id, curated]
+  );
 
   const distance = location ? distanceKm(location, destination) : null;
   const eta = distance !== null ? estimateEtaMinutes(distance) : null;
@@ -126,8 +157,31 @@ export default function DestinationDetailScreen({
     >
       {/* Hero */}
       <View style={{ width: '100%', height: 320 }}>
-        <Image source={{ uri: destination.imageUrl }} style={StyleSheet.absoluteFill} />
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)' }]} />
+        {heroUri ? (
+          <>
+            <Image source={{ uri: heroUri }} style={StyleSheet.absoluteFill} />
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)' }]} />
+            {/* CC licensing requires crediting the photographer + license. */}
+            {photo && !destination.imageUrl ? (
+              <View style={styles.photoCredit}>
+                <MaterialIcons name="photo-camera" size={11} color="rgba(255,255,255,0.9)" />
+                <Text numberOfLines={1} style={styles.photoCreditText}>
+                  {photo.credit}
+                </Text>
+              </View>
+            ) : null}
+          </>
+        ) : (
+          // No photo anywhere: a solid header carries the same white text.
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+            ]}
+          >
+            <MaterialIcons name="place" size={72} color={withAlpha('#FFFFFF', 0.85)} />
+          </View>
+        )}
         <View style={[styles.heroTopRow, { paddingTop: insets.top + 8 }]}>
           <CircleIconButton icon="arrow-back" onPress={onBack} />
           <CircleIconButton
@@ -154,17 +208,27 @@ export default function DestinationDetailScreen({
         </View>
       </View>
 
-      {/* Detail header */}
+      {/* Detail header — curated spots carry a rating and guide framing; a
+          searched place shows where it came from instead. */}
       <View style={styles.detailHeader}>
-        <View style={[styles.ratingChip, { backgroundColor: colors.secondaryContainer }]}>
-          <MaterialIcons name="star" size={18} color={colors.primary} />
-          <Text style={{ fontSize: 14, fontWeight: '600', color: colors.onSurface }}>
-            {destination.rating} ({reviews.length + 48} reviews)
-          </Text>
-        </View>
-        <Text style={{ fontSize: 12, color: colors.onSurfaceVariant }}>
-          Local guide picks
-        </Text>
+        {curated ? (
+          <>
+            <View style={[styles.ratingChip, { backgroundColor: colors.secondaryContainer }]}>
+              <MaterialIcons name="star" size={18} color={colors.primary} />
+              <Text style={{ fontSize: 14, fontWeight: '600', color: colors.onSurface }}>
+                {destination.rating} ({reviews.length + 48} reviews)
+              </Text>
+            </View>
+            <Text style={{ fontSize: 12, color: colors.onSurfaceVariant }}>Local guide picks</Text>
+          </>
+        ) : (
+          <View style={[styles.ratingChip, { backgroundColor: colors.secondaryContainer }]}>
+            <MaterialIcons name="map" size={16} color={colors.primary} />
+            <Text style={{ fontSize: 13, fontWeight: '600', color: colors.onSurface }}>
+              Added from the map
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Quick stats */}
@@ -181,7 +245,11 @@ export default function DestinationDetailScreen({
           title="Distance"
           body={distance !== null ? formatDistance(distance) : '—'}
         />
-        <StatCard icon="wb-sunny" title="Best time" body={destination.bestTimeToVisit} />
+        <StatCard
+          icon="wb-sunny"
+          title="Best time"
+          body={destination.bestTimeToVisit || 'Anytime'}
+        />
       </View>
 
       {/* Actions */}
@@ -193,7 +261,13 @@ export default function DestinationDetailScreen({
           onPress={() => openDirections(destination)}
         />
         <ActionButton icon="map" label="Map" onPress={() => openMap(destination)} />
-        <ActionButton icon="link" label="Source" onPress={() => openSource(destination)} />
+        {destination.sourceUrl ? (
+          <ActionButton
+            icon="link"
+            label={curated ? 'Source' : 'OSM'}
+            onPress={() => openSource(destination)}
+          />
+        ) : null}
       </View>
 
       <View style={{ paddingHorizontal: 20, marginTop: 12 }}>
@@ -205,23 +279,32 @@ export default function DestinationDetailScreen({
         <WeatherCard destinationId={destination.id} />
       </View>
 
-      <SectionTitle title="About" />
-      <Text
-        style={{
-          fontSize: 16,
-          color: colors.onSurface,
-          paddingHorizontal: 20,
-          lineHeight: 22,
-        }}
-      >
-        {destination.shortDescription}
-      </Text>
+      {destination.shortDescription ? (
+        <>
+          <SectionTitle title="About" />
+          <Text
+            style={{
+              fontSize: 16,
+              color: colors.onSurface,
+              paddingHorizontal: 20,
+              lineHeight: 22,
+            }}
+          >
+            {destination.shortDescription}
+          </Text>
+        </>
+      ) : null}
 
-      <SectionTitle title="Rating & reviews" />
-      <RatingSummary destination={destination} reviews={reviews} />
-      {reviews.map((r, i) => (
-        <ReviewCard key={i} review={r} />
-      ))}
+      {/* No invented reviews for a searched place. */}
+      {curated ? (
+        <>
+          <SectionTitle title="Rating & reviews" />
+          <RatingSummary destination={destination} reviews={reviews} />
+          {reviews.map((r, i) => (
+            <ReviewCard key={i} review={r} />
+          ))}
+        </>
+      ) : null}
 
       <SectionTitle title="Information" />
       <InfoGrid destination={destination} />
@@ -498,6 +581,7 @@ function ReviewCard({ review }: { review: Review }) {
 
 function InfoGrid({ destination }: { destination: Destination }) {
   const { colors } = useTheme();
+  const custom = isCustomPlace(destination.id);
   const rows: {
     icon: keyof typeof MaterialIcons.glyphMap;
     label: string;
@@ -509,8 +593,21 @@ function InfoGrid({ destination }: { destination: Destination }) {
       label: 'Coordinates',
       value: `${destination.latitude}, ${destination.longitude}`,
     },
-    { icon: 'schedule', label: 'Best time to visit', value: destination.bestTimeToVisit },
-    { icon: 'info', label: 'Source', value: 'Journey Era Bohol guide' },
+    // Skip fields a searched place has nothing real for.
+    ...(destination.bestTimeToVisit
+      ? [
+          {
+            icon: 'schedule' as const,
+            label: 'Best time to visit',
+            value: destination.bestTimeToVisit,
+          },
+        ]
+      : []),
+    {
+      icon: 'info',
+      label: 'Source',
+      value: custom ? 'OpenStreetMap' : 'Journey Era Bohol guide',
+    },
   ];
   return (
     <View
@@ -583,7 +680,11 @@ function NearbyCard({ destination }: { destination: Destination }) {
         shadowOffset: { width: 0, height: 2 },
       }}
     >
-      <Image source={{ uri: destination.imageUrl }} style={{ width: '100%', height: 110 }} />
+      <DestinationPhoto
+        destination={destination}
+        style={{ width: '100%', height: 110 }}
+        iconSize={32}
+      />
       <View style={{ padding: 10, gap: 4 }}>
         <Text numberOfLines={2} style={{ fontSize: 14, fontWeight: '600', color: colors.onSurface }}>
           {destination.name}
@@ -605,6 +706,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     padding: 12,
+  },
+  // Small, unobtrusive, but always present when a Commons photo is shown.
+  photoCredit: {
+    position: 'absolute',
+    top: 64,
+    left: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    maxWidth: '70%',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: 50,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  photoCreditText: {
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.9)',
   },
   heroBottom: {
     position: 'absolute',

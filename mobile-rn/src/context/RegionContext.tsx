@@ -13,7 +13,7 @@ import React, {
   useState,
 } from 'react';
 import { loadSetting, saveSetting } from '../data/db';
-import { BOHOL_REGION, Region, isBohol, provinceAt } from '../data/region';
+import { BOHOL_REGION, Region, isBohol, provinceAt, withPolygon } from '../data/region';
 import { useUserLocation } from '../hooks/useUserLocation';
 
 const SETTING_KEY = 'region';
@@ -58,9 +58,19 @@ export function RegionProvider({ children }: { children: React.ReactNode }) {
         const raw = await loadSetting(SETTING_KEY);
         if (!raw || !active) return;
         const stored: StoredRegion = JSON.parse(raw);
-        if (stored.enabled && stored.region) {
+        const savedRegion = stored.region;
+        if (stored.enabled && savedRegion) {
           setEnabled(true);
-          setRegion(stored.region);
+          setRegion(savedRegion);
+          // A region saved before outlines existed has no polygon; backfill it
+          // so the map framing and the share-card silhouette are correct.
+          if (!savedRegion.polygon) {
+            const filled = await withPolygon(savedRegion).catch(() => savedRegion);
+            if (active && filled.polygon) {
+              setRegion(filled);
+              saveSetting(SETTING_KEY, JSON.stringify({ enabled: true, region: filled })).catch(() => {});
+            }
+          }
         }
       } catch {
         // Unreadable setting just means "stay home".
@@ -88,6 +98,18 @@ export function RegionProvider({ children }: { children: React.ReactNode }) {
       setRegion(next);
       setError(null);
       persist({ enabled: true, region: next });
+      // The pickers usually supply a polygon, but a GPS fallback might not;
+      // fetch it in the background so the silhouette isn't left as Bohol.
+      if (!next.polygon) {
+        withPolygon(next)
+          .then((filled) => {
+            if (filled.polygon) {
+              setRegion((cur) => (cur.name === filled.name ? filled : cur));
+              persist({ enabled: true, region: filled });
+            }
+          })
+          .catch(() => {});
+      }
     },
     [persist]
   );

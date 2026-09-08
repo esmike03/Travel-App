@@ -2,13 +2,14 @@
 // stops. Both render nothing rather than a hollow placeholder when there is no
 // forecast — an empty weather box is worse than no weather box.
 import React from 'react';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeContext';
 import { withAlpha } from '../theme/colors';
 import { useWeather, useDestinationWeather, useForecastFor } from '../context/WeatherContext';
 import { isWashout, weatherIcon, weatherLabel, weatherTint } from '../data/weather';
 import { isoToDate, todayIso } from '../utils/planDates';
+import { SkeletonBlock } from './Skeleton';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -24,10 +25,22 @@ export function WeatherCard({ destinationId }: { destinationId: number }) {
   const weather = useDestinationWeather(destinationId);
 
   if (loading && !weather) {
+    // Shaped like the real card, so it does not jump when the forecast lands.
     return (
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, padding: 16 }}>
-        <ActivityIndicator size="small" color={colors.primary} />
-        <Text style={{ fontSize: 13, color: colors.onSurfaceVariant }}>Checking the weather…</Text>
+      <View
+        style={{
+          borderRadius: 18,
+          padding: 16,
+          backgroundColor: withAlpha(colors.onSurfaceVariant, 0.06),
+        }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <SkeletonBlock width={40} height={40} radius={20} />
+          <View style={{ flex: 1, gap: 8 }}>
+            <SkeletonBlock width="50%" height={26} />
+            <SkeletonBlock width="70%" height={12} />
+          </View>
+        </View>
       </View>
     );
   }

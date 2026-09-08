@@ -1,4 +1,4 @@
-# Travs — Bohol Travel Companion (React Native)
+# Chirpy — Your Travel Companion (React Native)
 
 Expo (managed) + TypeScript port of the original Jetpack Compose Android app in
 `../mobile`. This version runs on Android and iOS from one codebase.

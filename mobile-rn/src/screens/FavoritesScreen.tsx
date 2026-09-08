@@ -5,7 +5,9 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeContext';
 import { destinations, Destination } from '../data/destinations';
 import { useFavorites } from '../context/FavoritesContext';
-import { AddToTripButton, RatingPill } from '../components/common';
+import { AddToTripButton, DestinationPhoto, RatingPill } from '../components/common';
+import ChirpyPeek from '../components/ChirpyPeek';
+import SkeletonList from '../components/Skeleton';
 
 export default function FavoritesScreen({
   onDestinationClick,
@@ -13,8 +15,17 @@ export default function FavoritesScreen({
   onDestinationClick: (id: number) => void;
 }) {
   const { colors } = useTheme();
-  const { ids, toggle } = useFavorites();
+  const { ids, loading, toggle } = useFavorites();
   const saved = destinations.filter((d) => ids.includes(d.id));
+
+  // Without this the screen flashes "Nothing saved yet" before SQLite answers.
+  if (loading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
+        <SkeletonList rows={3} />
+      </View>
+    );
+  }
 
   if (saved.length === 0) {
     return <EmptyFavoritesState />;
@@ -59,7 +70,7 @@ function SavedDestinationRow({
   return (
     <Pressable onPress={onPress} style={[styles.row, { backgroundColor: colors.surface }]}>
       <View>
-        <Image source={{ uri: destination.imageUrl }} style={styles.thumb} />
+        <DestinationPhoto destination={destination} style={styles.thumb} />
         <RatingPill rating={destination.rating} style={{ position: 'absolute', top: 4, right: 4 }} />
       </View>
       <View style={{ flex: 1, gap: 4 }}>
@@ -110,6 +121,7 @@ function EmptyFavoritesState() {
       <Text style={{ fontSize: 14, color: colors.onSurfaceVariant, textAlign: 'center' }}>
         Tap the bookmark on any destination to keep it here for offline trip planning.
       </Text>
+      <ChirpyPeek message="Found somewhere you like? Bookmark it and I’ll keep it here." />
     </View>
   );
 }

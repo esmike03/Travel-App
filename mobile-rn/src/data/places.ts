@@ -8,7 +8,7 @@ import { CUSTOM_ID_BASE, Destination } from './destinations';
 import { Region, kmFromRegion, withPolygon } from './region';
 
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
-const UA = 'travs-bohol-app/0.1 (https://github.com/travs; Expo)';
+const UA = 'chirpy-travel-companion/0.1 (Expo)';
 
 export interface PlaceHit {
   name: string;

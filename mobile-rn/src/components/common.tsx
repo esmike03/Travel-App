@@ -2,6 +2,9 @@
 // SavedBadge, StarRow) — ported from the equivalent private composables.
 import React, { useState } from 'react';
 import {
+  Image,
+  ImageResizeMode,
+  ImageStyle,
   Linking,
   Pressable,
   StyleProp,
@@ -18,6 +21,63 @@ import { useTrips } from '../context/TripsContext';
 import { PlanPickerSheet } from './PlanPicker';
 import { planLabelOf } from '../utils/planDates';
 import { showToast } from '../utils/toast';
+
+// Category icons stand in when a place has no photo of its own.
+const CATEGORY_ICONS: Record<string, keyof typeof MaterialIcons.glyphMap> = {
+  Waterfall: 'water-drop',
+  Beach: 'beach-access',
+  Nature: 'park',
+  Hike: 'terrain',
+  'Cliff jump': 'waves',
+  Spring: 'pool',
+};
+
+/**
+ * A destination's photo, or an icon tile when it hasn't got one.
+ *
+ * Only curated spots carry a photo: a place the traveller searched for is stored
+ * with `imageUrl: ''` because inventing one would be a lie. Passing that empty
+ * string to <Image> renders a blank frame and logs `source.uri should not be an
+ * empty string` once per row, so every caller has to make the same check — hence
+ * doing it in one place.
+ */
+export function DestinationPhoto({
+  destination,
+  style,
+  iconSize = 24,
+  resizeMode = 'cover',
+}: {
+  destination: Destination;
+  /** Typed for the photo; the icon tile reuses the same box. */
+  style?: StyleProp<ImageStyle>;
+  iconSize?: number;
+  resizeMode?: ImageResizeMode;
+}) {
+  const { colors } = useTheme();
+  if (destination.imageUrl) {
+    return <Image source={{ uri: destination.imageUrl }} style={style} resizeMode={resizeMode} />;
+  }
+  return (
+    <View
+      style={[
+        // Sizing and radius are shared with the photo; the handful of style keys
+        // an Image has and a View doesn't are inert here.
+        style as StyleProp<ViewStyle>,
+        {
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: withAlpha(colors.primary, 0.12),
+        },
+      ]}
+    >
+      <MaterialIcons
+        name={CATEGORY_ICONS[destination.category] ?? 'place'}
+        size={iconSize}
+        color={colors.primary}
+      />
+    </View>
+  );
+}
 
 export function RatingPill({
   rating,

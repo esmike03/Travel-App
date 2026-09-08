@@ -54,6 +54,8 @@ interface AuthContextValue {
   session: Session | null;
   ready: boolean;
   formState: AuthFormState;
+  /** Local nickname onboarding used while full account auth is disabled. */
+  setNickname: (nickname: string) => void;
   login: (email: string, password: string) => void;
   register: (
     username: string,
@@ -106,6 +108,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       session,
       ready,
       formState,
+      setNickname: (nickname) => {
+        const name = nickname.trim().slice(0, 30);
+        // Keep whatever account the session already carries — this doubles as
+        // the rename path, not just first-run onboarding.
+        if (name) persist({ name, email: session?.email ?? '' });
+      },
       clearError: () =>
         setFormState((s) => (s.error ? { ...s, error: null } : s)),
       login: async (email, password) => {

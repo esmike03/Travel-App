@@ -9,7 +9,7 @@
 import { Coords } from '../hooks/useUserLocation';
 
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
-const UA = 'travs-bohol-app/0.1 (https://github.com/travs; Expo)';
+const UA = 'chirpy-travel-companion/0.1 (Expo)';
 
 export interface Region {
   /** Province name as OSM knows it, e.g. "Bohol", "Palawan", "Metro Manila". */
